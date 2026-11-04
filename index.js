@@ -88,10 +88,6 @@ let settings;
  * @type {Map<string, Record<string, { hashes: number[], metadata: object[] }>>}
  */
 const queryCache = new Map();
-/** 標準拡張がベクトル化済みと確認できたコレクション */
-const vectorizedCollections = new Set();
-/** ベクトル化されていないためスキップしたファイル(ログ用) */
-const skippedFiles = new Set();
 
 let webllmProvider = null;
 
@@ -264,26 +260,13 @@ async function getAdditionalArgs(items) {
     return args;
 }
 
-async function getSavedHashes(collectionId) {
-    const args = await getAdditionalArgs([]);
-    const response = await fetch('/api/vector/list', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            ...getVectorsRequestBody(args),
-            collectionId: collectionId,
-            source: getSource(),
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to get saved hashes for collection ${collectionId}`);
-    }
-
-    return await response.json();
-}
-
 /**
+ * 保存済みベクトルの検索。この拡張がサーバーに送るのはこのリクエストだけ。
+ *
+ * 既存のベクトルを絶対に壊さないため、/api/vector/list などコレクション単体を指定する窓口は使わない。
+ * SillyTavern 本体は、それらの窓口で index.json の読み込みに失敗すると、そのコレクションを削除して作り直す。
+ * query-multi はコレクションを複数形 (collectionIds) で受け取るため、この削除処理の対象にならない。
+ * また query-multi は既存のコレクションを読むだけで、書き込み・削除は行わない。
  * @param {string[]} collectionIds
  * @param {string} searchText
  * @param {number} topK
@@ -332,45 +315,6 @@ function getCommonAttachments() {
 function getCharacterAttachments(avatar) {
     const list = extension_settings.character_attachments?.[avatar] ?? [];
     return list.filter(x => !isAttachmentDisabled(x));
-}
-
-/**
- * 標準 Vector Storage 拡張がすでにベクトル化して保存しているファイルだけを選び、コレクション ID を返す。
- * この拡張はファイルのベクトル化を一切行わない。
- * 確認に使う /api/vector/list はローカルに保存済みのベクトル一覧を読むだけで、Embedding API は呼ばない。
- * @param {object[]} files
- * @returns {Promise<string[]>}
- */
-async function getVectorizedCollectionIds(files) {
-    const sourceKey = getModelKey();
-    const ids = [];
-
-    for (const file of files) {
-        const collectionId = getFileCollectionId(file.url);
-        const key = `${sourceKey}|${collectionId}`;
-
-        if (!vectorizedCollections.has(key)) {
-            try {
-                const hashes = await getSavedHashes(collectionId);
-                if (!hashes.length) {
-                    if (!skippedFiles.has(key)) {
-                        skippedFiles.add(key);
-                        console.log(`${LOG_PREFIX} Skipping ${file.name}: not vectorized by Vector Storage`);
-                    }
-                    continue;
-                }
-                skippedFiles.delete(key);
-                vectorizedCollections.add(key);
-            } catch (error) {
-                console.error(`${LOG_PREFIX} Failed to check ${file.name}`, error);
-                continue;
-            }
-        }
-
-        ids.push(collectionId);
-    }
-
-    return ids.filter(onlyUnique);
 }
 
 // ---------------------------------------------------------------------------
@@ -493,26 +437,25 @@ async function searchForCharacters() {
         ? targets.flatMap(t => getCharacterAttachments(t.character.avatar))
         : [];
 
-    // キャラごとの検索は並列に実行する(結果の並びはメンバー順のまま)
-    const perCharacter = await Promise.all(targets.map(async ({ character }) => {
+    // 同じファイルへの同時アクセスを避けるため、キャラごとに1件ずつ順番に検索する
+    const results = [];
+    for (const { character } of targets) {
         const files = settings.scope === 'all_members'
             ? [...common, ...allMemberFiles]
             : [...common, ...getCharacterAttachments(character.avatar)];
 
         const uniqueFiles = files.filter((f, i, arr) => arr.findIndex(x => x.url === f.url) === i);
         if (!uniqueFiles.length) {
-            return null;
+            continue;
         }
 
         const queryText = buildCardText(character);
         if (!queryText) {
-            return null;
+            continue;
         }
 
-        const collectionIds = await getVectorizedCollectionIds(uniqueFiles);
-        if (!collectionIds.length) {
-            return null;
-        }
+        // ベクトル化されていないファイルはサーバー側で結果0件になるだけなので、事前確認はしない
+        const collectionIds = uniqueFiles.map(f => getFileCollectionId(f.url)).filter(onlyUnique);
 
         const queryResults = await cachedQuery(collectionIds, queryText);
         const chunks = [];
@@ -522,10 +465,9 @@ async function searchForCharacters() {
         }
 
         console.debug(`${LOG_PREFIX} ${character.name}: ${chunks.length} chunks`, queryResults);
-        return { name: character.name, avatar: character.avatar, chunks: chunks.filter(onlyUnique) };
-    }));
+        results.push({ name: character.name, avatar: character.avatar, chunks: chunks.filter(onlyUnique) });
+    }
 
-    const results = perCharacter.filter(Boolean);
     return results;
 }
 
@@ -716,8 +658,6 @@ function bindSettings() {
 
     $('#cvs_clear_cache').on('click', () => {
         queryCache.clear();
-        vectorizedCollections.clear();
-        skippedFiles.clear();
         toastr.success('Cache cleared', 'Character Vector Search');
     });
 
@@ -731,8 +671,7 @@ function bindSettings() {
             }
             // 毎回の生成で実際に挿入される内容を表示
             const summary = results.map(r => `${r.name}: ${r.chunks.length} chunks`).join(' / ');
-            const skipped = skippedFiles.size ? `\n未ベクトル化のためスキップしたファイル: ${skippedFiles.size} 件 (Vector Storage でベクトル化すると検索対象になります)` : '';
-            const output = `${summary}${skipped}\n\n${formatResults(results) || '(nothing)'}`;
+            const output = `${summary}\n\n${formatResults(results) || '(nothing)'}`;
             console.log(`${LOG_PREFIX} Test search\n${output}`);
             $('#cvs_test_output').text(output);
         } catch (error) {
@@ -762,9 +701,7 @@ jQuery(async () => {
     await addSettingsUi();
 
     // キャラカードが編集されたらキャッシュは自然に無効化される(クエリのハッシュが変わる)。
-    // ファイル削除時はベクトル化済みの確認結果を破棄する。
     eventSource.on(event_types.FILE_ATTACHMENT_DELETED, () => {
-        vectorizedCollections.clear();
         queryCache.clear();
     });
     eventSource.on(event_types.CHAT_CHANGED, () => {
