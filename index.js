@@ -19,11 +19,13 @@ import {
     extension_prompt_types,
     extension_prompt_roles,
     getRequestHeaders,
+    is_send_press,
     saveSettingsDebounced,
     setExtensionPrompt,
     substituteParams,
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
+import { is_group_generating } from '../../../group-chats.js';
 import { getStringHash, onlyUnique } from '../../../utils.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../textgen-settings.js';
 import { oai_settings } from '../../../openai.js';
@@ -445,8 +447,9 @@ async function cachedQuery(collectionIds, query) {
                 .slice(0, keys.length - CHAT_CACHE_LIMIT)
                 .forEach(k => delete cache[k]);
         }
-        // チャットファイルに保存(応答後の通常のチャット保存でも保存される)
-        getContext().saveMetadataDebounced?.();
+        // ここでは保存処理を呼ばない。応答後に SillyTavern 本体が行う通常のチャット保存で、
+        // チャットファイルに書き込まれる。生成中に保存すると、グループではグループ情報も同時に保存されるため、
+        // 生成中にメンバー一覧を一時的に書き換える他の拡張 (Prome のユーザー立ち絵など) と競合する。
     }
     return result;
 }
@@ -689,6 +692,10 @@ function bindSettings() {
         const context = getContext();
         if (!context.chatMetadata || !context.getCurrentChatId?.()) {
             toastr.info('チャットが開かれていません', 'Character Vector Search');
+            return;
+        }
+        if (is_send_press || is_group_generating) {
+            toastr.warning('生成中は削除できません。生成が終わってから押してください。', 'Character Vector Search');
             return;
         }
         const count = Object.keys(context.chatMetadata[CHAT_CACHE_KEY] ?? {}).length;
