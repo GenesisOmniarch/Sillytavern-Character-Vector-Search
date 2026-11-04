@@ -1,0 +1,99 @@
+<div id="character_vector_search_settings" class="character-vector-search-settings">
+    <div class="inline-drawer">
+        <div id="cvs_inline_drawer_toggle" class="inline-drawer-toggle inline-drawer-header">
+            <b>Character Vector Search</b>
+            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+        </div>
+        <div class="inline-drawer-content">
+            <label class="checkbox_label" for="cvs_enabled">
+                <input id="cvs_enabled" type="checkbox" />
+                <span>有効化 (キャラクターカード全体で Data Bank を検索)</span>
+            </label>
+
+            <small class="cvs_note">
+                Embedding ソース・Retrieve chunks・Score threshold は標準の <b>Vector Storage</b> 拡張の Data Bank 設定を使用します。<br />
+                <span id="cvs_inherited_info"></span>
+            </small>
+
+            <hr />
+            <h4>グループチャット</h4>
+            <label for="cvs_group_mode">検索対象</label>
+            <select id="cvs_group_mode" class="text_pole">
+                <option value="all">グループ全員分 (人数分検索)</option>
+                <option value="drafted">応答キャラクターのみ</option>
+            </select>
+            <label class="checkbox_label" for="cvs_include_muted">
+                <input id="cvs_include_muted" type="checkbox" />
+                <span>ミュート中のメンバーも含める</span>
+            </label>
+
+            <label for="cvs_scope">検索する Data Bank の範囲</label>
+            <select id="cvs_scope" class="text_pole">
+                <option value="own">Global + Chat + そのキャラ自身の Character 添付</option>
+                <option value="all_members">Global + Chat + 対象キャラ全員の Character 添付</option>
+            </select>
+
+            <hr />
+            <h4>クエリに使うカードの項目</h4>
+            <div id="cvs_fields" class="cvs_fields"></div>
+            <label for="cvs_max_query_chars">クエリ最大文字数 (0 = 無制限)</label>
+            <small>Embedding モデルの入力上限を超えてエラーになる場合に設定してください。</small>
+            <input id="cvs_max_query_chars" class="text_pole" type="number" min="0" step="100" />
+
+            <hr />
+            <h4>挿入</h4>
+            <label for="cvs_template">全体テンプレート <small>({{text}} = 全キャラ分の結果)</small></label>
+            <textarea id="cvs_template" class="text_pole textarea_compact" rows="3"></textarea>
+            <label for="cvs_char_template">キャラごとのテンプレート <small>({{name}}, {{text}})</small></label>
+            <textarea id="cvs_char_template" class="text_pole textarea_compact" rows="2"></textarea>
+
+            <div class="radio_group">
+                <label>
+                    <input type="radio" name="cvs_position" value="2" />
+                    <span>Before Main Prompt / Story String</span>
+                </label>
+                <label>
+                    <input type="radio" name="cvs_position" value="0" />
+                    <span>After Main Prompt / Story String</span>
+                </label>
+                <label>
+                    <input type="radio" name="cvs_position" value="1" />
+                    <span>In-chat @ Depth</span>
+                </label>
+            </div>
+            <div class="flex-container">
+                <div class="flex1">
+                    <label for="cvs_depth">Depth</label>
+                    <input id="cvs_depth" class="text_pole" type="number" min="0" max="9999" />
+                </div>
+                <div class="flex1">
+                    <label for="cvs_role">Role</label>
+                    <select id="cvs_role" class="text_pole">
+                        <option value="0">System</option>
+                        <option value="1">User</option>
+                        <option value="2">Assistant</option>
+                    </select>
+                </div>
+            </div>
+
+            <label class="checkbox_label" for="cvs_dedupe">
+                <input id="cvs_dedupe" type="checkbox" />
+                <span>キャラ間で重複したチャンクを1回だけ挿入</span>
+            </label>
+            <label class="checkbox_label" for="cvs_include_wi">
+                <input id="cvs_include_wi" type="checkbox" />
+                <span>World Info のスキャン対象に含める</span>
+            </label>
+            <label class="checkbox_label" for="cvs_cache_results">
+                <input id="cvs_cache_results" type="checkbox" />
+                <span>検索結果をキャッシュ (カードが変わらない限り再 Embedding しない)</span>
+            </label>
+
+            <div class="flex-container">
+                <div id="cvs_test" class="menu_button">テスト検索</div>
+                <div id="cvs_clear_cache" class="menu_button">キャッシュクリア</div>
+            </div>
+            <pre id="cvs_test_output" class="cvs_test_output"></pre>
+        </div>
+    </div>
+</div>

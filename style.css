@@ -1,0 +1,22 @@
+.character-vector-search-settings .cvs_note {
+    display: block;
+    margin: 4px 0;
+    opacity: 0.8;
+}
+
+.character-vector-search-settings .cvs_fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 2px 8px;
+}
+
+.character-vector-search-settings .cvs_test_output {
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 0.85em;
+}
+
+.character-vector-search-settings .cvs_test_output:empty {
+    display: none;
+}
