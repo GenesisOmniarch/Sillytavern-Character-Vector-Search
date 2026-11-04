@@ -17,7 +17,7 @@
 
             <hr />
             <h4>グループチャット</h4>
-            <small class="cvs_note">毎回の生成で、グループ全員分のキャラカードでそれぞれ検索し、全員分の参考資料をキャラごとに別ブロックで挿入します(1対1ではそのキャラ分)。</small>
+            <small class="cvs_note">毎回の生成で、グループ全員分のキャラカードでそれぞれ検索します。全員分の結果が {{text}} に入り、キャラごとに &lt;character_reference name="キャラ名"&gt; … &lt;/character_reference&gt; のブロックで区切られます(1対1ではそのキャラ分のみ)。</small>
             <label class="checkbox_label" for="cvs_include_muted">
                 <input id="cvs_include_muted" type="checkbox" />
                 <span>ミュート中のメンバーも含める</span>
@@ -42,7 +42,7 @@
                 <label for="cvs_template">
                     <span data-i18n="Injection Template">Injection Template</span>
                 </label>
-                <small>キャラごとに適用されます。&lcub;&lcub;text&rcub;&rcub; = そのキャラのカードで検索した結果、&lcub;&lcub;char&rcub;&rcub; / &lcub;&lcub;name&rcub;&rcub; = そのキャラの名前(応答キャラではなく、各ブロックの持ち主)。&lcub;&lcub;user&rcub;&rcub; なども使えます。</small>
+                <small>標準と同様に自由に記述できます。&lcub;&lcub;text&rcub;&rcub; = 全員分の検索結果(キャラごとのブロックに区切り済み)。&lcub;&lcub;text&rcub;&rcub; を書かなかった場合は末尾に付きます。</small>
                 <textarea id="cvs_template" class="margin0 text_pole textarea_compact" rows="3" placeholder="Use &lcub;&lcub;text&rcub;&rcub; macro to specify the position of retrieved text."></textarea>
 
                 <label for="cvs_position" data-i18n="Injection Position">Injection Position</label>

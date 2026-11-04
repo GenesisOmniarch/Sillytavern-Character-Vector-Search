@@ -31,8 +31,7 @@ import { oai_settings } from '../../../openai.js';
 
 const MODULE_NAME = 'character_vector_search';
 const LOG_PREFIX = 'CharacterVectorSearch:';
-/** キャラごとに別々の拡張プロンプトとして挿入する。キーは昇順ソートされるので連番でメンバー順を保つ */
-export const EXTENSION_PROMPT_TAG_PREFIX = '5_character_vector_search_';
+export const EXTENSION_PROMPT_TAG = '5_character_vector_search';
 
 /** カードから抽出できるフィールド */
 const CARD_FIELDS = {
@@ -72,8 +71,8 @@ const defaultSettings = {
     },
     // クエリ文字数上限 (0 = 無制限)。Embedding モデルの入力上限対策
     max_query_chars: 0,
-    // キャラごとに適用。{{text}} = そのキャラのカードで検索した結果, {{char}} / {{name}} = そのキャラ名
-    template: 'Reference material for {{char}}:\n{{text}}',
+    // 標準拡張と同様に1回だけ適用。{{text}} = 全員分の検索結果(キャラごとのブロックに分けたもの)
+    template: 'Related information:\n{{text}}',
     position: extension_prompt_types.IN_PROMPT,
     depth: 4,
     role: extension_prompt_roles.SYSTEM,
@@ -606,49 +605,77 @@ async function searchForCharacters() {
     return results;
 }
 
+/** ブロックの区切りタグ。本文中に同じタグがあっても区切りが壊れないようにエスケープする */
+const BLOCK_TAG = 'character_reference';
+
+function escapeAttribute(value) {
+    return String(value ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function neutralizeBlockTags(text) {
+    return String(text ?? '').replace(new RegExp(`<(/?)(${BLOCK_TAG})`, 'gi'), '&lt;$1$2');
+}
+
 /**
- * 1キャラ分の検索結果に Injection Template を適用する。
- * {{char}} はそのキャラの名前で展開される(応答キャラの名前にはならない)。
+ * 1キャラ分の結果を、持ち主が明確なブロックにする。
+ *   <character_reference name="Alice">
+ *   ...Alice のカードで検索したチャンク...
+ *   </character_reference>
  * @param {{ name: string, chunks: string[] }} result
  * @returns {string}
  */
-function formatCharacterResult({ name, chunks }) {
+function formatCharacterBlock({ name, chunks }) {
     if (!chunks.length) {
         return '';
     }
-    const template = String(settings.template || '').trim() ? settings.template : defaultSettings.template;
-    // 第2引数 null → (content, name1, name2, original, group, replaceCharacterCard, additionalMacro) の旧シグネチャ
-    return substituteParams(template, null, name, undefined, undefined, true, { text: chunks.join('\n'), name });
-}
-
-/** 前回挿入したキー(メンバー数が減った場合に消すため) */
-const injectedKeys = new Set();
-
-function clearPrompts() {
-    for (const key of injectedKeys) {
-        setExtensionPrompt(key, '', settings.position, settings.depth, settings.include_wi, settings.role);
+    // 資料本文中の {{char}} はそのブロックの持ち主の名前で展開する(応答キャラ名にしない)。
+    // 第2引数 null → 新旧どちらの ST でも (content, name1, name2) の旧シグネチャとして解釈される
+    const body = chunks
+        .map(c => neutralizeBlockTags(substituteParams(c, null, name)).trim())
+        .filter(Boolean)
+        .join('\n\n');
+    if (!body) {
+        return '';
     }
-    injectedKeys.clear();
+    return `<${BLOCK_TAG} name="${escapeAttribute(name)}">\n${body}\n</${BLOCK_TAG}>`;
 }
 
 /**
- * 全員分の結果を、キャラごとに別々の拡張プロンプトとして挿入する
+ * 全員分のブロックを作り、Injection Template に1回だけ当てはめる。
+ * テンプレートの内容に関係なく成立するよう、
+ *  - テンプレート側のマクロ ({{char}}, {{user}} など) は通常どおり展開
+ *  - {{text}} は展開後に文字列としてそのまま差し込む(テンプレート側のマクロ展開で資料本文が二重展開されない)
+ *  - {{text}} が無いテンプレートでも、末尾に全員分のブロックを付ける
+ *  - テンプレートが空なら全員分のブロックのみ
  * @param {{ name: string, chunks: string[] }[]} results
- * @returns {string[]} 挿入したテキスト
+ * @returns {string}
  */
-function injectResults(results) {
-    const inserted = [];
-    results.forEach((result, index) => {
-        const text = formatCharacterResult(result);
-        if (!text) {
-            return;
-        }
-        const key = `${EXTENSION_PROMPT_TAG_PREFIX}${String(index).padStart(3, '0')}`;
-        setExtensionPrompt(key, text, Number(settings.position), Number(settings.depth), settings.include_wi, Number(settings.role));
-        injectedKeys.add(key);
-        inserted.push(text);
-    });
-    return inserted;
+function formatResults(results) {
+    const blocks = results.map(formatCharacterBlock).filter(Boolean);
+    if (!blocks.length) {
+        return '';
+    }
+    const text = blocks.join('\n\n');
+    const template = String(settings.template ?? '');
+    const textMacro = /\{\{\s*text\s*\}\}/gi;
+
+    if (!template.trim()) {
+        return text;
+    }
+
+    const marker = `CVSTEXTMARKER${Date.now()}${Math.random().toString(36).slice(2)}`;
+    const hasTextMacro = textMacro.test(template);
+    textMacro.lastIndex = 0;
+    const rendered = substituteParams(template.replace(textMacro, marker));
+
+    if (!hasTextMacro || !rendered.includes(marker)) {
+        return `${rendered.replaceAll(marker, '').trimEnd()}\n${text}`;
+    }
+    return rendered.split(marker).join(text);
+}
+
+function clearPrompt() {
+    setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.role);
 }
 
 /**
@@ -660,21 +687,22 @@ function injectResults(results) {
  */
 async function interceptor(_chat, _contextSize, _abort, type) {
     try {
-        clearPrompts();
+        clearPrompt();
 
         if (!settings.enabled || type === 'quiet') {
             return;
         }
 
-        // 毎回、全員分のカードで検索し、全員分の参考資料をキャラごとに分けて挿入する
+        // 毎回、全員分のカードで検索し、全員分の参考資料をキャラごとのブロックに分けて {{text}} に入れる
         const results = await searchForCharacters();
-        const inserted = injectResults(results);
-        if (!inserted.length) {
+        const insertedText = formatResults(results);
+        if (!insertedText) {
             console.debug(`${LOG_PREFIX} No relevant Data Bank chunks found`);
             return;
         }
 
-        console.log(`${LOG_PREFIX} Injected reference material for ${inserted.length} character(s)\n`, inserted.join('\n\n'));
+        console.log(`${LOG_PREFIX} Injecting reference material\n`, insertedText);
+        setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, Number(settings.position), Number(settings.depth), settings.include_wi, Number(settings.role));
     } catch (error) {
         console.error(`${LOG_PREFIX} Failed`, error);
         toastr.error(String(error?.message ?? error), 'Character Vector Search', { preventDuplicates: true });
@@ -705,7 +733,7 @@ function loadSettings() {
     delete s.group_mode;
     delete s.dedupe;
     delete s.char_template;
-    if (s.template === 'Character-related information:\n{{text}}') {
+    if (['Character-related information:\n{{text}}', 'Reference material for {{char}}:\n{{text}}'].includes(s.template)) {
         s.template = defaultSettings.template;
     }
     settings = s;
@@ -775,9 +803,9 @@ function bindSettings() {
                 $('#cvs_test_output').text('No target characters / no Data Bank files');
                 return;
             }
-            // 毎回の生成で挿入される内容(キャラごとに別ブロック)を表示
-            const sections = results.map(r => `=== ${r.name} (${r.chunks.length} chunks) ===\n${formatCharacterResult(r) || '(nothing)'}`);
-            const output = sections.join('\n\n');
+            // 毎回の生成で実際に挿入される内容を表示
+            const summary = results.map(r => `${r.name}: ${r.chunks.length} chunks`).join(' / ');
+            const output = `${summary}\n\n${formatResults(results) || '(nothing)'}`;
             console.log(`${LOG_PREFIX} Test search\n${output}`);
             $('#cvs_test_output').text(output);
         } catch (error) {
@@ -813,7 +841,7 @@ jQuery(async () => {
         queryCache.clear();
     });
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        clearPrompts();
+        clearPrompt();
         updateInheritedInfo();
     });
 });

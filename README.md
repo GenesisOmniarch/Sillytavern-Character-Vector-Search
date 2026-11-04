@@ -9,8 +9,18 @@
 - **グループチャット**: 毎回の生成で、**メンバー全員分**(人数分)をそれぞれのカードで検索し、
   **全員分の参考資料を毎回挿入**します。誰が応答する番でも全キャラの資料がプロンプトにあるため、
   全員の口調が途切れず、全員が会話に参加し続けられます
-  - 結果は**キャラごとに別々のブロック**(別々の拡張プロンプト)として挿入され、1つのテキストに混ぜません。
-    各ブロックには Injection Template が個別に適用され、`{{char}}` はそのブロックの持ち主の名前になります
+  - `{{text}}` には全員分が入り、**キャラごとに明確なブロックで区切られます**(AI がどのキャラの資料か混同しないため):
+
+    ```
+    <character_reference name="Alice">
+    (Alice のカードで検索したチャンク)
+    </character_reference>
+
+    <character_reference name="Bob">
+    (Bob のカードで検索したチャンク)
+    </character_reference>
+    ```
+  - ブロックは拡張機能が作るので、Injection Template の内容に関係なく区切りは保たれます
   - キャラ間でチャンクの重複除去は行いません(各キャラが自分の資料を欠けずに持ちます)
   - ミュート中のメンバーを含めるかどうかも設定可能(デフォルト: 含める)
 - **Retrieve chunks / Score threshold は標準 Vector Storage 拡張と同じ値**を使用
@@ -47,7 +57,7 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 | 検索する Data Bank の範囲 | そのキャラ自身の Character 添付のみ / 対象キャラ全員分 |
 | クエリに使うカードの項目 | Name, Description, Personality, Scenario, First message, Examples, System prompt, Post-history, Character's note などを選択 |
 | クエリ最大文字数 | Embedding モデルの入力上限を超える場合に設定(0 = 無制限) |
-| Injection Template | 標準拡張の Data Bank「Injection Template」と同じ形式で、**キャラごとに**適用。`{{text}}` = そのキャラのカードで検索した結果、`{{char}}` / `{{name}}` = そのキャラ名。既定値: `Reference material for {{char}}:` + 改行 + `{{text}}` |
+| Injection Template | 標準拡張の Data Bank「Injection Template」と同じく自由に記述でき、1回だけ適用されます。`{{text}}` = 全員分の検索結果(キャラごとのブロックに区切り済み)。`{{text}}` を書かなかった場合は末尾に付き、空の場合はブロックのみ挿入。`{{char}}` などのマクロは通常どおり展開されます。資料本文中の `{{char}}` は各ブロックの持ち主の名前で展開されます |
 | Injection Position | 標準拡張と同じ(Before / After Main Prompt、In-chat @ Depth as System/User/Assistant) |
 | キャッシュ | 検索結果をメモリにキャッシュ |
 
