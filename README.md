@@ -44,8 +44,9 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 | 検索する Data Bank の範囲 | そのキャラ自身の Character 添付のみ / 対象キャラ全員分 |
 | クエリに使うカードの項目 | Name, Description, Personality, Scenario, First message, Examples, System prompt, Post-history, Character's note などを選択 |
 | クエリ最大文字数 | Embedding モデルの入力上限を超える場合に設定(0 = 無制限) |
-| 全体テンプレート / キャラごとのテンプレート | `{{text}}`, `{{name}}` が使えます |
-| 挿入位置 / Depth / Role | 標準拡張と同様 |
+| Injection Template | 標準拡張の Data Bank「Injection Template」と同じ。`{{text}}` の位置に検索結果(グループでは全キャラ分)が入ります。`{{char}}` などのマクロも使用可 |
+| Per-character Template | キャラごとの結果の書式。`{{name}}` = キャラ名、`{{text}}` = そのキャラの結果 |
+| Injection Position | 標準拡張と同じ(Before / After Main Prompt、In-chat @ Depth as System/User/Assistant) |
 | 重複チャンクを1回だけ挿入 | 複数キャラで同じチャンクがヒットした場合 |
 | キャッシュ | 検索結果をメモリにキャッシュ |
 

@@ -41,38 +41,42 @@
             <input id="cvs_max_query_chars" class="text_pole" type="number" min="0" step="100" />
 
             <hr />
-            <h4>挿入</h4>
-            <label for="cvs_template">全体テンプレート <small>({{text}} = 全キャラ分の結果)</small></label>
-            <textarea id="cvs_template" class="text_pole textarea_compact" rows="3"></textarea>
-            <label for="cvs_char_template">キャラごとのテンプレート <small>({{name}}, {{text}})</small></label>
-            <textarea id="cvs_char_template" class="text_pole textarea_compact" rows="2"></textarea>
+            <h4>Injection</h4>
+            <div class="flex-container flexFlowColumn">
+                <label for="cvs_template">
+                    <span data-i18n="Injection Template">Injection Template</span>
+                </label>
+                <small>&lcub;&lcub;text&rcub;&rcub; = 検索結果(グループでは全キャラ分)。&lcub;&lcub;char&rcub;&rcub;, &lcub;&lcub;user&rcub;&rcub; などのマクロも使えます。</small>
+                <textarea id="cvs_template" class="margin0 text_pole textarea_compact" rows="3" placeholder="Use &lcub;&lcub;text&rcub;&rcub; macro to specify the position of retrieved text."></textarea>
 
-            <div class="radio_group">
-                <label>
-                    <input type="radio" name="cvs_position" value="2" />
-                    <span>Before Main Prompt / Story String</span>
+                <label for="cvs_char_template">
+                    <span>Per-character Template</span>
                 </label>
-                <label>
-                    <input type="radio" name="cvs_position" value="0" />
-                    <span>After Main Prompt / Story String</span>
-                </label>
-                <label>
-                    <input type="radio" name="cvs_position" value="1" />
-                    <span>In-chat @ Depth</span>
-                </label>
-            </div>
-            <div class="flex-container">
-                <div class="flex1">
-                    <label for="cvs_depth">Depth</label>
-                    <input id="cvs_depth" class="text_pole" type="number" min="0" max="9999" />
-                </div>
-                <div class="flex1">
-                    <label for="cvs_role">Role</label>
-                    <select id="cvs_role" class="text_pole">
-                        <option value="0">System</option>
-                        <option value="1">User</option>
-                        <option value="2">Assistant</option>
-                    </select>
+                <small>キャラごとの結果の書式。&lcub;&lcub;name&rcub;&rcub; = キャラ名、&lcub;&lcub;text&rcub;&rcub; = そのキャラの検索結果。見出しが不要なら &lcub;&lcub;text&rcub;&rcub; だけにしてください。</small>
+                <textarea id="cvs_char_template" class="margin0 text_pole textarea_compact" rows="2" placeholder="[&lcub;&lcub;name&rcub;&rcub;]&#10;&lcub;&lcub;text&rcub;&rcub;"></textarea>
+
+                <label for="cvs_position" data-i18n="Injection Position">Injection Position</label>
+                <div id="cvs_position" class="radio_group">
+                    <label>
+                        <input type="radio" name="cvs_position" value="2" />
+                        <span data-i18n="Before Main Prompt / Story String">Before Main Prompt / Story String</span>
+                    </label>
+                    <!--Keep these as 0 and 1 to interface with the setExtensionPrompt function-->
+                    <label>
+                        <input type="radio" name="cvs_position" value="0" />
+                        <span data-i18n="After Main Prompt / Story String">After Main Prompt / Story String</span>
+                    </label>
+                    <label for="cvs_depth" title="How many messages before the current end of the chat." data-i18n="[title]How many messages before the current end of the chat.">
+                        <input type="radio" name="cvs_position" value="1" />
+                        <span data-i18n="In-chat @ Depth">In-chat @ Depth</span>
+                        <input id="cvs_depth" class="text_pole widthUnset" type="number" min="0" max="9999" />
+                        <span>as</span>
+                        <select id="cvs_role" class="text_pole widthNatural">
+                            <option value="0" data-i18n="System">System</option>
+                            <option value="1" data-i18n="User">User</option>
+                            <option value="2" data-i18n="Assistant">Assistant</option>
+                        </select>
+                    </label>
                 </div>
             </div>
 

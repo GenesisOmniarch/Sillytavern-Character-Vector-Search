@@ -631,14 +631,17 @@ function formatResults(results) {
             continue;
         }
         const text = filtered.join('\n');
-        blocks.push(substituteParamsExtended(settings.char_template, { text, name }));
+        const charTemplate = String(settings.char_template || '').trim() ? settings.char_template : '{{text}}';
+        blocks.push(substituteParamsExtended(charTemplate, { text, name }));
     }
 
     if (!blocks.length) {
         return '';
     }
 
-    return substituteParamsExtended(settings.template, { text: blocks.join('\n\n') });
+    // Injection Template が空の場合は既定値を使う
+    const template = String(settings.template || '').trim() ? settings.template : defaultSettings.template;
+    return substituteParamsExtended(template, { text: blocks.join('\n\n') });
 }
 
 function clearPrompt() {
