@@ -77,12 +77,12 @@
             </label>
             <label class="checkbox_label" for="cvs_cache_results">
                 <input id="cvs_cache_results" type="checkbox" />
-                <span>検索結果をキャッシュ (カードが変わらない限り再 Embedding しない)</span>
+                <span>検索結果をこのチャットに保存する (同じ条件では再検索せず、料金がかからない)</span>
             </label>
 
             <div class="flex-container">
                 <div id="cvs_test" class="menu_button">テスト検索</div>
-                <div id="cvs_clear_cache" class="menu_button">キャッシュクリア</div>
+                <div id="cvs_clear_cache" class="menu_button" title="このチャットに保存された検索結果を削除します。次の生成で再検索(課金)されます。">キャッシュクリア</div>
             </div>
             <pre id="cvs_test_output" class="cvs_test_output"></pre>
         </div>

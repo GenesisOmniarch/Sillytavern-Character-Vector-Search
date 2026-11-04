@@ -82,12 +82,10 @@ const defaultSettings = {
 /** @type {typeof defaultSettings} */
 let settings;
 
-/**
- * クエリ結果キャッシュ。カードが変わらない限り同じ結果になるため、
- * グループで各メンバーが応答するたびに再度 Embedding するのを避ける。
- * @type {Map<string, Record<string, { hashes: number[], metadata: object[] }>>}
- */
-const queryCache = new Map();
+/** 検索結果の保存先 (チャットのメタデータ内のキー) */
+const CHAT_CACHE_KEY = 'character_vector_search_cache';
+/** 1チャットあたりの保存件数の上限(古いものから削除) */
+const CHAT_CACHE_LIMIT = 200;
 
 let webllmProvider = null;
 
@@ -354,16 +352,22 @@ function buildCardText(character) {
     push(f.creator_notes, 'Creator notes', data.creator_notes ?? character?.creatorcomment);
     push(f.tags, 'Tags', Array.isArray(data.tags) ? data.tags.join(', ') : (Array.isArray(character?.tags) ? character.tags.join(', ') : ''));
 
+    const raw = parts.join('\n\n');
+
     // {{char}} などのマクロを「そのキャラ」の名前で展開。
     // 第2引数を null にすると新旧どちらの ST でも (content, name1, name2) の旧シグネチャとして解釈される
-    let text = substituteParams(parts.join('\n\n'), null, name);
+    let text = substituteParams(raw, null, name);
     text = text.replace(/\n{3,}/g, '\n\n').trim();
 
     const max = Number(settings.max_query_chars) || 0;
     if (max > 0 && text.length > max) {
         text = text.substring(0, max);
     }
-    return text;
+
+    // 保存済み結果の照合には「マクロ展開前」のカード内容を使う。
+    // {{time}} や {{random}} などがカードに含まれていても、カード自体が変わらなければ再検索(課金)しない。
+    const cacheSource = [raw, name, getContext().name1 ?? '', max].join('\u0001');
+    return { text, cacheSource };
 }
 
 /**
@@ -402,22 +406,47 @@ function getTargetCharacters() {
 // 検索 & 挿入
 // ---------------------------------------------------------------------------
 
+/** このチャットに保存された検索結果 */
+function getChatCache() {
+    const metadata = getContext().chatMetadata;
+    if (!metadata) {
+        return null;
+    }
+    if (!metadata[CHAT_CACHE_KEY] || typeof metadata[CHAT_CACHE_KEY] !== 'object') {
+        metadata[CHAT_CACHE_KEY] = {};
+    }
+    return metadata[CHAT_CACHE_KEY];
+}
+
 /**
+ * 検索を実行する。同じ条件の結果がこのチャットに保存されていれば、それを使い検索しない(課金なし)。
+ * 照合条件: Embedding ソース/モデル, Retrieve chunks, Score threshold, 検索対象ファイルの組み合わせ, カード内容
+ * 結果はチャットのメタデータ(チャットファイル内)に保存されるため、ページを開き直しても残る。
  * @param {string[]} collectionIds
- * @param {string} queryText
+ * @param {{ text: string, cacheSource: string }} query
  */
-async function cachedQuery(collectionIds, queryText) {
+async function cachedQuery(collectionIds, query) {
     const topK = getRetrieveCount();
     const threshold = getScoreThreshold();
-    const key = [getModelKey(), topK, threshold, [...collectionIds].sort().join(','), getStringHash(queryText)].join('|');
+    const key = String(getStringHash([getModelKey(), topK, threshold, [...collectionIds].sort().join(','), query.cacheSource].join('|')));
+    const cache = settings.cache_results ? getChatCache() : null;
 
-    if (settings.cache_results && queryCache.has(key)) {
-        return queryCache.get(key);
+    if (cache && cache[key]?.result) {
+        return cache[key].result;
     }
 
-    const result = await queryMultipleCollections(collectionIds, queryText, topK, threshold);
-    if (settings.cache_results) {
-        queryCache.set(key, result);
+    const result = await queryMultipleCollections(collectionIds, query.text, topK, threshold);
+
+    if (cache) {
+        cache[key] = { result, t: Date.now() };
+        const keys = Object.keys(cache);
+        if (keys.length > CHAT_CACHE_LIMIT) {
+            keys.sort((a, b) => (cache[a].t ?? 0) - (cache[b].t ?? 0))
+                .slice(0, keys.length - CHAT_CACHE_LIMIT)
+                .forEach(k => delete cache[k]);
+        }
+        // チャットファイルに保存(応答後の通常のチャット保存でも保存される)
+        getContext().saveMetadataDebounced?.();
     }
     return result;
 }
@@ -449,15 +478,15 @@ async function searchForCharacters() {
             continue;
         }
 
-        const queryText = buildCardText(character);
-        if (!queryText) {
+        const query = buildCardText(character);
+        if (!query.text) {
             continue;
         }
 
         // ベクトル化されていないファイルはサーバー側で結果0件になるだけなので、事前確認はしない
         const collectionIds = uniqueFiles.map(f => getFileCollectionId(f.url)).filter(onlyUnique);
 
-        const queryResults = await cachedQuery(collectionIds, queryText);
+        const queryResults = await cachedQuery(collectionIds, query);
         const chunks = [];
         for (const collectionId of Object.keys(queryResults)) {
             const metadata = queryResults[collectionId]?.metadata ?? [];
@@ -656,9 +685,23 @@ function bindSettings() {
         fieldsContainer.append(row);
     }
 
-    $('#cvs_clear_cache').on('click', () => {
-        queryCache.clear();
-        toastr.success('Cache cleared', 'Character Vector Search');
+    $('#cvs_clear_cache').on('click', async () => {
+        const context = getContext();
+        if (!context.chatMetadata || !context.getCurrentChatId?.()) {
+            toastr.info('チャットが開かれていません', 'Character Vector Search');
+            return;
+        }
+        const count = Object.keys(context.chatMetadata[CHAT_CACHE_KEY] ?? {}).length;
+        if (!count) {
+            toastr.info('このチャットに保存された検索結果はありません', 'Character Vector Search');
+            return;
+        }
+        if (!confirm(`このチャットに保存された検索結果 ${count} 件を削除します。\n次の生成で全員分を再検索するため、Embedding API の料金が発生します。よろしいですか?`)) {
+            return;
+        }
+        delete context.chatMetadata[CHAT_CACHE_KEY];
+        await context.saveMetadata();
+        toastr.success('このチャットの保存済み検索結果を削除しました', 'Character Vector Search');
     });
 
     $('#cvs_test').on('click', async () => {
@@ -700,10 +743,6 @@ jQuery(async () => {
     loadSettings();
     await addSettingsUi();
 
-    // キャラカードが編集されたらキャッシュは自然に無効化される(クエリのハッシュが変わる)。
-    eventSource.on(event_types.FILE_ATTACHMENT_DELETED, () => {
-        queryCache.clear();
-    });
     eventSource.on(event_types.CHAT_CHANGED, () => {
         clearPrompt();
         updateInheritedInfo();
