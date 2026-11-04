@@ -17,9 +17,16 @@
 
             <hr />
             <h4>グループチャット</h4>
+            <label for="cvs_inject_mode">挿入する結果</label>
+            <select id="cvs_inject_mode" class="text_pole">
+                <option value="responding">応答キャラ自身の結果のみ (口調が混ざらない・推奨)</option>
+                <option value="combined">全員分の結果をまとめて挿入</option>
+            </select>
+            <small class="cvs_note">「応答キャラ自身の結果のみ」では、各メンバーの応答時にそのキャラのカードで検索した結果だけが挿入され、他メンバーの結果は混ざりません。</small>
+
             <label for="cvs_group_mode">検索対象</label>
             <select id="cvs_group_mode" class="text_pole">
-                <option value="all">グループ全員分 (人数分検索)</option>
+                <option value="all">グループ全員分 (毎回人数分検索・結果はキャッシュ)</option>
                 <option value="drafted">応答キャラクターのみ</option>
             </select>
             <label class="checkbox_label" for="cvs_include_muted">
@@ -32,6 +39,7 @@
                 <option value="own">Global + Chat + そのキャラ自身の Character 添付</option>
                 <option value="all_members">Global + Chat + 対象キャラ全員の Character 添付</option>
             </select>
+            <small class="cvs_note">「対象キャラ全員」にすると他メンバー用の資料もヒットし得るため、口調を分けたい場合は「そのキャラ自身」を推奨します。</small>
 
             <hr />
             <h4>クエリに使うカードの項目</h4>
@@ -46,7 +54,7 @@
                 <label for="cvs_template">
                     <span data-i18n="Injection Template">Injection Template</span>
                 </label>
-                <small>&lcub;&lcub;text&rcub;&rcub; = 検索結果(グループでは全キャラ分)。&lcub;&lcub;char&rcub;&rcub;, &lcub;&lcub;user&rcub;&rcub; などのマクロも使えます。</small>
+                <small>&lcub;&lcub;text&rcub;&rcub; = 検索結果(応答キャラ分。まとめて挿入時は全員分)、&lcub;&lcub;name&rcub;&rcub; = 応答キャラ名。&lcub;&lcub;char&rcub;&rcub;, &lcub;&lcub;user&rcub;&rcub; などのマクロも使えます。</small>
                 <textarea id="cvs_template" class="margin0 text_pole textarea_compact" rows="3" placeholder="Use &lcub;&lcub;text&rcub;&rcub; macro to specify the position of retrieved text."></textarea>
 
                 <label for="cvs_char_template">
@@ -82,7 +90,7 @@
 
             <label class="checkbox_label" for="cvs_dedupe">
                 <input id="cvs_dedupe" type="checkbox" />
-                <span>キャラ間で重複したチャンクを1回だけ挿入</span>
+                <span>キャラ間で重複したチャンクを1回だけ挿入 (まとめて挿入時)</span>
             </label>
             <label class="checkbox_label" for="cvs_include_wi">
                 <input id="cvs_include_wi" type="checkbox" />
