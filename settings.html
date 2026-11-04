@@ -74,6 +74,11 @@
                 <input id="cvs_include_wi" type="checkbox" />
                 <span>World Info のスキャン対象に含める</span>
             </label>
+            <label class="checkbox_label" for="cvs_auto_ingest">
+                <input id="cvs_auto_ingest" type="checkbox" />
+                <span>未ベクトル化の Data Bank ファイルをこの拡張でベクトル化する</span>
+            </label>
+            <small class="cvs_note">オフ(既定)の場合、この拡張はベクトル化を一切行わず、標準 Vector Storage 拡張がベクトル化済みのファイルだけを検索します。グループで他メンバーの Character 添付も検索したい場合は、オンにするか、Vector Storage の「Vectorize All」で事前にベクトル化してください。</small>
             <label class="checkbox_label" for="cvs_cache_results">
                 <input id="cvs_cache_results" type="checkbox" />
                 <span>検索結果をキャッシュ (カードが変わらない限り再 Embedding しない)</span>

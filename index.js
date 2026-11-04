@@ -78,6 +78,9 @@ const defaultSettings = {
     role: extension_prompt_roles.SYSTEM,
     include_wi: false,
     cache_results: true,
+    // 未ベクトル化の Data Bank ファイルをこの拡張が自分でベクトル化するか。
+    // false の場合は、標準 Vector Storage 拡張がベクトル化済みのファイルだけを検索する(この拡張はベクトル化を一切しない)
+    auto_ingest: false,
 };
 
 /** @type {typeof defaultSettings} */
@@ -91,6 +94,8 @@ let settings;
 const queryCache = new Map();
 /** 取り込み済み/取り込み中のコレクション */
 const ingestedCollections = new Set();
+/** ベクトル化されていないためスキップしたファイル(ログ用) */
+const skippedFiles = new Set();
 /** @type {Map<string, Promise<void>>} */
 const ingestInFlight = new Map();
 
@@ -433,9 +438,18 @@ async function ensureIngested(files) {
             ingestInFlight.set(key, (async () => {
                 const hashes = await getSavedHashes(collectionId);
                 if (!hashes.length) {
+                    if (!settings.auto_ingest) {
+                        // 標準拡張がまだベクトル化していない。こちらではベクトル化せずスキップ(次回また確認する)
+                        if (!skippedFiles.has(key)) {
+                            skippedFiles.add(key);
+                            console.log(`${LOG_PREFIX} Skipping ${file.name}: not vectorized by Vector Storage yet`);
+                        }
+                        return;
+                    }
                     console.log(`${LOG_PREFIX} Data Bank file ${file.name} is not vectorized yet, ingesting...`);
                     await vectorizeFile(file, collectionId);
                 }
+                skippedFiles.delete(key);
                 ingestedCollections.add(key);
             })().finally(() => ingestInFlight.delete(key)));
         }
@@ -447,7 +461,8 @@ async function ensureIngested(files) {
         }
     }
 
-    return ids.filter(onlyUnique);
+    // ベクトルが存在するコレクションだけを検索対象にする
+    return ids.filter(onlyUnique).filter(id => ingestedCollections.has(`${sourceKey}|${id}`));
 }
 
 // ---------------------------------------------------------------------------
@@ -570,25 +585,25 @@ async function searchForCharacters() {
         ? targets.flatMap(t => getCharacterAttachments(t.character.avatar))
         : [];
 
-    const results = [];
-    for (const { character } of targets) {
+    // キャラごとの検索は並列に実行する(結果の並びはメンバー順のまま)
+    const perCharacter = await Promise.all(targets.map(async ({ character }) => {
         const files = settings.scope === 'all_members'
             ? [...common, ...allMemberFiles]
             : [...common, ...getCharacterAttachments(character.avatar)];
 
         const uniqueFiles = files.filter((f, i, arr) => arr.findIndex(x => x.url === f.url) === i);
         if (!uniqueFiles.length) {
-            continue;
+            return null;
         }
 
         const queryText = buildCardText(character);
         if (!queryText) {
-            continue;
+            return null;
         }
 
         const collectionIds = await ensureIngested(uniqueFiles);
         if (!collectionIds.length) {
-            continue;
+            return null;
         }
 
         const queryResults = await cachedQuery(collectionIds, queryText);
@@ -599,9 +614,10 @@ async function searchForCharacters() {
         }
 
         console.debug(`${LOG_PREFIX} ${character.name}: ${chunks.length} chunks`, queryResults);
-        results.push({ name: character.name, avatar: character.avatar, chunks: chunks.filter(onlyUnique) });
-    }
+        return { name: character.name, avatar: character.avatar, chunks: chunks.filter(onlyUnique) };
+    }));
 
+    const results = perCharacter.filter(Boolean);
     return results;
 }
 
@@ -764,6 +780,7 @@ function bindSettings() {
     bindCheckbox('#cvs_include_muted', 'include_muted');
     bindCheckbox('#cvs_include_wi', 'include_wi');
     bindCheckbox('#cvs_cache_results', 'cache_results');
+    bindCheckbox('#cvs_auto_ingest', 'auto_ingest');
     bindText('#cvs_scope', 'scope');
     bindText('#cvs_max_query_chars', 'max_query_chars', true);
     bindText('#cvs_template', 'template');
@@ -792,6 +809,7 @@ function bindSettings() {
     $('#cvs_clear_cache').on('click', () => {
         queryCache.clear();
         ingestedCollections.clear();
+        skippedFiles.clear();
         toastr.success('Cache cleared', 'Character Vector Search');
     });
 
@@ -805,7 +823,8 @@ function bindSettings() {
             }
             // 毎回の生成で実際に挿入される内容を表示
             const summary = results.map(r => `${r.name}: ${r.chunks.length} chunks`).join(' / ');
-            const output = `${summary}\n\n${formatResults(results) || '(nothing)'}`;
+            const skipped = skippedFiles.size ? `\n未ベクトル化のためスキップしたファイル: ${skippedFiles.size} 件 (Vector Storage でベクトル化すると検索対象になります)` : '';
+            const output = `${summary}${skipped}\n\n${formatResults(results) || '(nothing)'}`;
             console.log(`${LOG_PREFIX} Test search\n${output}`);
             $('#cvs_test_output').text(output);
         } catch (error) {
