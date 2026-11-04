@@ -5,6 +5,16 @@
             <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
         </div>
         <div class="inline-drawer-content">
+            <h4>保存済みの検索結果(このチャット)</h4>
+            <small class="cvs_note">このチャットに保存されている検索結果です。表示するだけで、検索も料金も発生しません。「未保存」のキャラは次の生成で検索されます。</small>
+            <div id="cvs_saved_results" class="cvs_saved_results"></div>
+            <div class="cvs_buttons">
+                <div id="cvs_test" class="menu_button" title="現在のチャットで挿入される内容を表示します。未保存のキャラは検索されます(料金が発生します)。">テスト検索</div>
+                <div id="cvs_clear_cache" class="menu_button" title="このチャットに保存された検索結果を削除します。次の生成で再検索(課金)されます。">キャッシュクリア</div>
+            </div>
+            <pre id="cvs_test_output" class="cvs_test_output"></pre>
+
+            <hr />
             <label class="checkbox_label" for="cvs_enabled">
                 <input id="cvs_enabled" type="checkbox" />
                 <span>有効化 (キャラクターカード全体で Data Bank を検索)</span>
@@ -80,11 +90,6 @@
                 <span>検索結果をこのチャットに保存する (同じ条件では再検索せず、料金がかからない)</span>
             </label>
 
-            <div class="flex-container">
-                <div id="cvs_test" class="menu_button">テスト検索</div>
-                <div id="cvs_clear_cache" class="menu_button" title="このチャットに保存された検索結果を削除します。次の生成で再検索(課金)されます。">キャッシュクリア</div>
-            </div>
-            <pre id="cvs_test_output" class="cvs_test_output"></pre>
         </div>
     </div>
 </div>

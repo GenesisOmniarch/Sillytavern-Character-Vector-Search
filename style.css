@@ -20,3 +20,67 @@
 .character-vector-search-settings .cvs_test_output:empty {
     display: none;
 }
+
+/* ボタンを横並びに。ST の .menu_button は width: min-content のため日本語が1文字ずつ折り返して縦長になる */
+.character-vector-search-settings .cvs_buttons {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 5px;
+    margin: 5px 0;
+}
+
+.character-vector-search-settings .cvs_buttons .menu_button {
+    width: auto;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    margin: 0;
+    padding: 3px 10px;
+}
+
+.character-vector-search-settings .cvs_saved_results {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 5px 0;
+}
+
+.character-vector-search-settings .cvs_saved_summary {
+    font-size: 0.9em;
+    opacity: 0.85;
+}
+
+.character-vector-search-settings .cvs_saved_item {
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 5px;
+    padding: 3px 6px;
+}
+
+.character-vector-search-settings .cvs_saved_item > summary {
+    cursor: pointer;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 8px;
+}
+
+.character-vector-search-settings .cvs_saved_status {
+    font-size: 0.85em;
+}
+
+.character-vector-search-settings .cvs_saved_none {
+    opacity: 0.7;
+}
+
+.character-vector-search-settings .cvs_saved_text {
+    max-height: 300px;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-size: 0.85em;
+    margin: 4px 0 0;
+}
+
+.character-vector-search-settings .cvs_saved_empty {
+    font-size: 0.9em;
+    opacity: 0.7;
+}

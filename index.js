@@ -421,26 +421,73 @@ function getChatCache() {
 }
 
 /**
- * 検索を実行する。同じ条件の結果がこのチャットに保存されていれば、それを使い検索しない(課金なし)。
+ * 保存済み結果の照合キー。
  * 照合条件: Embedding ソース/モデル, Retrieve chunks, Score threshold, 検索対象ファイルの組み合わせ, カード内容
- * 結果はチャットのメタデータ(チャットファイル内)に保存されるため、ページを開き直しても残る。
  * @param {string[]} collectionIds
- * @param {{ text: string, cacheSource: string }} query
+ * @param {{ cacheSource: string }} query
  */
-async function cachedQuery(collectionIds, query) {
-    const topK = getRetrieveCount();
-    const threshold = getScoreThreshold();
-    const key = String(getStringHash([getModelKey(), topK, threshold, [...collectionIds].sort().join(','), query.cacheSource].join('|')));
+function getCacheKey(collectionIds, query) {
+    return String(getStringHash([getModelKey(), getRetrieveCount(), getScoreThreshold(), [...collectionIds].sort().join(','), query.cacheSource].join('|')));
+}
+
+/**
+ * キャラごとの検索条件を作る(検索はしない・通信なし)
+ * @returns {{ character: any, collectionIds: string[], query: { text: string, cacheSource: string }, key: string }[]}
+ */
+function getQueryPlans() {
+    const targets = getTargetCharacters();
+    const common = getCommonAttachments();
+    const allMemberFiles = settings.scope === 'all_members'
+        ? targets.flatMap(t => getCharacterAttachments(t.character.avatar))
+        : [];
+
+    const plans = [];
+    for (const { character } of targets) {
+        const files = settings.scope === 'all_members'
+            ? [...common, ...allMemberFiles]
+            : [...common, ...getCharacterAttachments(character.avatar)];
+
+        // ベクトル化されていないファイルはサーバー側で結果0件になるだけなので、事前確認はしない
+        const collectionIds = files.map(f => getFileCollectionId(f.url)).filter(onlyUnique);
+        const query = buildCardText(character);
+        if (!collectionIds.length || !query.text) {
+            continue;
+        }
+        plans.push({ character, collectionIds, query, key: getCacheKey(collectionIds, query) });
+    }
+    return plans;
+}
+
+/**
+ * 検索結果から挿入するチャンク本文を取り出す
+ * @param {Record<string, { metadata?: object[] }>} queryResults
+ * @returns {string[]}
+ */
+function extractChunks(queryResults) {
+    const chunks = [];
+    for (const collectionId of Object.keys(queryResults ?? {})) {
+        const metadata = queryResults[collectionId]?.metadata ?? [];
+        chunks.push(...metadata.filter(x => x.text).sort((a, b) => a.index - b.index).map(x => x.text));
+    }
+    return chunks.filter(onlyUnique);
+}
+
+/**
+ * 検索を実行する。同じ条件の結果がこのチャットに保存されていれば、それを使い検索しない(課金なし)。
+ * 結果はチャットのメタデータ(チャットファイル内)に保存されるため、ページを開き直しても残る。
+ * @param {{ character: any, collectionIds: string[], query: { text: string }, key: string }} plan
+ */
+async function cachedQuery({ character, collectionIds, query, key }) {
     const cache = settings.cache_results ? getChatCache() : null;
 
     if (cache && cache[key]?.result) {
         return cache[key].result;
     }
 
-    const result = await queryMultipleCollections(collectionIds, query.text, topK, threshold);
+    const result = await queryMultipleCollections(collectionIds, query.text, getRetrieveCount(), getScoreThreshold());
 
     if (cache) {
-        cache[key] = { result, t: Date.now() };
+        cache[key] = { result, t: Date.now(), name: character.name, avatar: character.avatar };
         const keys = Object.keys(cache);
         if (keys.length > CHAT_CACHE_LIMIT) {
             keys.sort((a, b) => (cache[a].t ?? 0) - (cache[b].t ?? 0))
@@ -459,47 +506,14 @@ async function cachedQuery(collectionIds, query) {
  * @returns {Promise<{ name: string, avatar: string, chunks: string[] }[]>}
  */
 async function searchForCharacters() {
-    const targets = getTargetCharacters();
-    if (!targets.length) {
-        return [];
-    }
-
-    const common = getCommonAttachments();
-    const allMemberFiles = settings.scope === 'all_members'
-        ? targets.flatMap(t => getCharacterAttachments(t.character.avatar))
-        : [];
-
     // 同じファイルへの同時アクセスを避けるため、キャラごとに1件ずつ順番に検索する
     const results = [];
-    for (const { character } of targets) {
-        const files = settings.scope === 'all_members'
-            ? [...common, ...allMemberFiles]
-            : [...common, ...getCharacterAttachments(character.avatar)];
-
-        const uniqueFiles = files.filter((f, i, arr) => arr.findIndex(x => x.url === f.url) === i);
-        if (!uniqueFiles.length) {
-            continue;
-        }
-
-        const query = buildCardText(character);
-        if (!query.text) {
-            continue;
-        }
-
-        // ベクトル化されていないファイルはサーバー側で結果0件になるだけなので、事前確認はしない
-        const collectionIds = uniqueFiles.map(f => getFileCollectionId(f.url)).filter(onlyUnique);
-
-        const queryResults = await cachedQuery(collectionIds, query);
-        const chunks = [];
-        for (const collectionId of Object.keys(queryResults)) {
-            const metadata = queryResults[collectionId]?.metadata ?? [];
-            chunks.push(...metadata.filter(x => x.text).sort((a, b) => a.index - b.index).map(x => x.text));
-        }
-
-        console.debug(`${LOG_PREFIX} ${character.name}: ${chunks.length} chunks`, queryResults);
-        results.push({ name: character.name, avatar: character.avatar, chunks: chunks.filter(onlyUnique) });
+    for (const plan of getQueryPlans()) {
+        const queryResults = await cachedQuery(plan);
+        const chunks = extractChunks(queryResults);
+        console.debug(`${LOG_PREFIX} ${plan.character.name}: ${chunks.length} chunks`, queryResults);
+        results.push({ name: plan.character.name, avatar: plan.character.avatar, chunks });
     }
-
     return results;
 }
 
@@ -708,6 +722,7 @@ function bindSettings() {
         }
         delete context.chatMetadata[CHAT_CACHE_KEY];
         await context.saveMetadata();
+        renderSavedResults();
         toastr.success('このチャットの保存済み検索結果を削除しました', 'Character Vector Search');
     });
 
@@ -724,14 +739,70 @@ function bindSettings() {
             const output = `${summary}\n\n${formatResults(results) || '(nothing)'}`;
             console.log(`${LOG_PREFIX} Test search\n${output}`);
             $('#cvs_test_output').text(output);
+            renderSavedResults();
         } catch (error) {
             console.error(`${LOG_PREFIX} Test failed`, error);
             toastr.error(String(error?.message ?? error), 'Character Vector Search');
         }
     });
 
-    $('#cvs_inline_drawer_toggle').on('click', updateInheritedInfo);
+    $('#cvs_inline_drawer_toggle').on('click', () => {
+        updateInheritedInfo();
+        renderSavedResults();
+    });
     updateInheritedInfo();
+    renderSavedResults();
+}
+
+/**
+ * このチャットに保存されている検索結果を表示する。保存済みデータを読むだけで、検索も通信もしない。
+ */
+function renderSavedResults() {
+    const container = $('#cvs_saved_results');
+    if (!container.length) {
+        return;
+    }
+    container.empty();
+
+    const context = getContext();
+    if (!context.getCurrentChatId?.() || !context.chatMetadata) {
+        container.append($('<div class="cvs_saved_empty"></div>').text('チャットが開かれていません。'));
+        return;
+    }
+
+    const cache = context.chatMetadata[CHAT_CACHE_KEY] ?? {};
+    const totalCount = Object.keys(cache).length;
+    const plans = getQueryPlans();
+    const matched = plans.filter(p => cache[p.key]?.result).length;
+
+    const summary = settings.cache_results
+        ? `このチャットの保存件数: ${totalCount} 件 / 現在の条件に一致: ${matched} / ${plans.length} 人`
+        : `保存はオフです(「検索結果をこのチャットに保存する」がオフ)。保存件数: ${totalCount} 件`;
+    container.append($('<div class="cvs_saved_summary"></div>').text(summary));
+
+    if (!plans.length) {
+        container.append($('<div class="cvs_saved_empty"></div>').text('検索対象のキャラクター、または Data Bank ファイルがありません。'));
+        return;
+    }
+
+    for (const plan of plans) {
+        const entry = cache[plan.key];
+        const item = $('<details class="cvs_saved_item"></details>');
+        const header = $('<summary></summary>');
+        header.append($('<b></b>').text(plan.character.name));
+
+        if (entry?.result) {
+            const chunks = extractChunks(entry.result);
+            const time = entry.t ? new Date(entry.t).toLocaleString('ja-JP') : '日時不明';
+            header.append($('<span class="cvs_saved_status cvs_saved_ok"></span>').text(`保存済み · ${chunks.length} 件 · ${time}`));
+            item.append(header);
+            item.append($('<pre class="cvs_saved_text"></pre>').text(formatCharacterBlock({ name: plan.character.name, chunks }) || '(該当する資料なし)'));
+        } else {
+            header.append($('<span class="cvs_saved_status cvs_saved_none"></span>').text('未保存 · 次の生成で検索されます(料金が発生します)'));
+            item.append(header);
+        }
+        container.append(item);
+    }
 }
 
 async function addSettingsUi() {
@@ -753,5 +824,9 @@ jQuery(async () => {
     eventSource.on(event_types.CHAT_CHANGED, () => {
         clearPrompt();
         updateInheritedInfo();
+        renderSavedResults();
     });
+    // 生成のあとに表示を更新する(表示のみ。検索・保存はしない)
+    eventSource.on(event_types.MESSAGE_RECEIVED, () => renderSavedResults());
+    eventSource.on(event_types.GENERATION_ENDED, () => renderSavedResults());
 });
