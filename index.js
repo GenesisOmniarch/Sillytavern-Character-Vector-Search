@@ -24,8 +24,7 @@ import {
     substituteParams,
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
-import { getFileAttachment } from '../../../chats.js';
-import { getStringHash, splitRecursive, trimToEndSentence, trimToStartSentence, onlyUnique, escapeHtml } from '../../../utils.js';
+import { getStringHash, onlyUnique } from '../../../utils.js';
 import { textgen_types, textgenerationwebui_settings } from '../../../textgen-settings.js';
 import { oai_settings } from '../../../openai.js';
 
@@ -78,9 +77,6 @@ const defaultSettings = {
     role: extension_prompt_roles.SYSTEM,
     include_wi: false,
     cache_results: true,
-    // 未ベクトル化の Data Bank ファイルをこの拡張が自分でベクトル化するか。
-    // false の場合は、標準 Vector Storage 拡張がベクトル化済みのファイルだけを検索する(この拡張はベクトル化を一切しない)
-    auto_ingest: false,
 };
 
 /** @type {typeof defaultSettings} */
@@ -92,12 +88,10 @@ let settings;
  * @type {Map<string, Record<string, { hashes: number[], metadata: object[] }>>}
  */
 const queryCache = new Map();
-/** 取り込み済み/取り込み中のコレクション */
-const ingestedCollections = new Set();
+/** 標準拡張がベクトル化済みと確認できたコレクション */
+const vectorizedCollections = new Set();
 /** ベクトル化されていないためスキップしたファイル(ログ用) */
 const skippedFiles = new Set();
-/** @type {Map<string, Promise<void>>} */
-const ingestInFlight = new Map();
 
 let webllmProvider = null;
 
@@ -289,24 +283,6 @@ async function getSavedHashes(collectionId) {
     return await response.json();
 }
 
-async function insertVectorItems(collectionId, items) {
-    const args = await getAdditionalArgs(items.map(x => x.text));
-    const response = await fetch('/api/vector/insert', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            ...getVectorsRequestBody(args),
-            collectionId: collectionId,
-            items: items,
-            source: getSource(),
-        }),
-    });
-
-    if (!response.ok) {
-        throw new Error(`Failed to insert vector items for collection ${collectionId}`);
-    }
-}
-
 /**
  * @param {string[]} collectionIds
  * @param {string} searchText
@@ -358,111 +334,43 @@ function getCharacterAttachments(avatar) {
     return list.filter(x => !isAttachmentDisabled(x));
 }
 
-function getChunkDelimiters() {
-    const delimiters = ['\n\n', '\n', ' ', ''];
-    if (vs().force_chunk_delimiter) {
-        delimiters.unshift(vs().force_chunk_delimiter);
-    }
-    return delimiters;
-}
-
-function overlapChunks(chunk, index, chunks, overlapSize) {
-    const halfOverlap = Math.floor(overlapSize / 2);
-    const nextChunk = chunks[index + 1];
-    const prevChunk = chunks[index - 1];
-    const nextOverlap = trimToEndSentence(nextChunk?.substring(0, halfOverlap)) || '';
-    const prevOverlap = trimToStartSentence(prevChunk?.substring(prevChunk.length - halfOverlap)) || '';
-    return [prevOverlap, chunk, nextOverlap].filter(x => x).join(' ');
-}
-
 /**
- * 標準拡張と同じ分割設定でファイルをベクトル化する
- * (標準拡張側がまだ取り込んでいないファイル、例: 他のグループメンバーのキャラ添付 用)
- */
-async function vectorizeFile(file, collectionId) {
-    const v = vs();
-    let fileText = await getFileAttachment(file.url);
-    if (!fileText) {
-        return;
-    }
-
-    if (v.translate_files && typeof globalThis.translate === 'function') {
-        fileText = await globalThis.translate(fileText, 'en');
-    }
-
-    const thresholdLength = (Number(v.size_threshold_db) || 5) * 1024;
-    let chunkSize = file.size > thresholdLength ? (Number(v.chunk_size_db) || 2500) : -1;
-    const overlapPercent = Number(v.overlap_percent_db) || 0;
-    const overlapSize = Math.round(chunkSize * overlapPercent / 100);
-    chunkSize = overlapSize > 0 ? (chunkSize - overlapSize) : chunkSize;
-    const applyOverlap = (x, y, z) => overlapSize > 0 ? overlapChunks(x, y, z, overlapSize) : x;
-    const chunks = v.only_custom_boundary && v.force_chunk_delimiter
-        ? fileText.split(v.force_chunk_delimiter).map(applyOverlap)
-        : splitRecursive(fileText, chunkSize, getChunkDelimiters()).map(applyOverlap);
-
-    const items = chunks.map((chunk, index) => ({ hash: getStringHash(chunk), text: chunk, index }));
-    const batchSize = ['transformers', 'ollama'].includes(getSource()) ? 1 : 5;
-
-    const toastBody = $('<span>').text('Please wait...');
-    const toast = toastr.info(toastBody, `Character Vector Search: ingesting ${escapeHtml(file.name)}`, { closeButton: false, escapeHtml: false, timeOut: 0, extendedTimeOut: 0 });
-    try {
-        for (let i = 0; i < items.length; i += batchSize) {
-            toastBody.text(`${i}/${items.length} chunks processed`);
-            await insertVectorItems(collectionId, items.slice(i, i + batchSize));
-        }
-        console.log(`${LOG_PREFIX} Inserted ${items.length} chunks for ${file.name} into ${collectionId}`);
-    } finally {
-        toastr.clear(toast);
-    }
-}
-
-/**
- * ファイルが未取り込みなら取り込み、コレクション ID を返す
+ * 標準 Vector Storage 拡張がすでにベクトル化して保存しているファイルだけを選び、コレクション ID を返す。
+ * この拡張はファイルのベクトル化を一切行わない。
+ * 確認に使う /api/vector/list はローカルに保存済みのベクトル一覧を読むだけで、Embedding API は呼ばない。
  * @param {object[]} files
  * @returns {Promise<string[]>}
  */
-async function ensureIngested(files) {
-    const ids = [];
+async function getVectorizedCollectionIds(files) {
     const sourceKey = getModelKey();
+    const ids = [];
 
     for (const file of files) {
         const collectionId = getFileCollectionId(file.url);
         const key = `${sourceKey}|${collectionId}`;
-        ids.push(collectionId);
 
-        if (ingestedCollections.has(key)) {
-            continue;
-        }
-
-        if (!ingestInFlight.has(key)) {
-            ingestInFlight.set(key, (async () => {
+        if (!vectorizedCollections.has(key)) {
+            try {
                 const hashes = await getSavedHashes(collectionId);
                 if (!hashes.length) {
-                    if (!settings.auto_ingest) {
-                        // 標準拡張がまだベクトル化していない。こちらではベクトル化せずスキップ(次回また確認する)
-                        if (!skippedFiles.has(key)) {
-                            skippedFiles.add(key);
-                            console.log(`${LOG_PREFIX} Skipping ${file.name}: not vectorized by Vector Storage yet`);
-                        }
-                        return;
+                    if (!skippedFiles.has(key)) {
+                        skippedFiles.add(key);
+                        console.log(`${LOG_PREFIX} Skipping ${file.name}: not vectorized by Vector Storage`);
                     }
-                    console.log(`${LOG_PREFIX} Data Bank file ${file.name} is not vectorized yet, ingesting...`);
-                    await vectorizeFile(file, collectionId);
+                    continue;
                 }
                 skippedFiles.delete(key);
-                ingestedCollections.add(key);
-            })().finally(() => ingestInFlight.delete(key)));
+                vectorizedCollections.add(key);
+            } catch (error) {
+                console.error(`${LOG_PREFIX} Failed to check ${file.name}`, error);
+                continue;
+            }
         }
 
-        try {
-            await ingestInFlight.get(key);
-        } catch (error) {
-            console.error(`${LOG_PREFIX} Failed to ingest ${file.name}`, error);
-        }
+        ids.push(collectionId);
     }
 
-    // ベクトルが存在するコレクションだけを検索対象にする
-    return ids.filter(onlyUnique).filter(id => ingestedCollections.has(`${sourceKey}|${id}`));
+    return ids.filter(onlyUnique);
 }
 
 // ---------------------------------------------------------------------------
@@ -601,7 +509,7 @@ async function searchForCharacters() {
             return null;
         }
 
-        const collectionIds = await ensureIngested(uniqueFiles);
+        const collectionIds = await getVectorizedCollectionIds(uniqueFiles);
         if (!collectionIds.length) {
             return null;
         }
@@ -746,6 +654,7 @@ function loadSettings() {
     }
     // 旧バージョンの設定を整理(応答キャラのみ挿入/まとめて挿入は廃止)
     delete s.inject_mode;
+    delete s.auto_ingest;
     delete s.group_mode;
     delete s.dedupe;
     delete s.char_template;
@@ -780,7 +689,6 @@ function bindSettings() {
     bindCheckbox('#cvs_include_muted', 'include_muted');
     bindCheckbox('#cvs_include_wi', 'include_wi');
     bindCheckbox('#cvs_cache_results', 'cache_results');
-    bindCheckbox('#cvs_auto_ingest', 'auto_ingest');
     bindText('#cvs_scope', 'scope');
     bindText('#cvs_max_query_chars', 'max_query_chars', true);
     bindText('#cvs_template', 'template');
@@ -808,7 +716,7 @@ function bindSettings() {
 
     $('#cvs_clear_cache').on('click', () => {
         queryCache.clear();
-        ingestedCollections.clear();
+        vectorizedCollections.clear();
         skippedFiles.clear();
         toastr.success('Cache cleared', 'Character Vector Search');
     });
@@ -854,9 +762,9 @@ jQuery(async () => {
     await addSettingsUi();
 
     // キャラカードが編集されたらキャッシュは自然に無効化される(クエリのハッシュが変わる)。
-    // ファイル削除時は取り込み済みフラグを破棄する。
+    // ファイル削除時はベクトル化済みの確認結果を破棄する。
     eventSource.on(event_types.FILE_ATTACHMENT_DELETED, () => {
-        ingestedCollections.clear();
+        vectorizedCollections.clear();
         queryCache.clear();
     });
     eventSource.on(event_types.CHAT_CHANGED, () => {

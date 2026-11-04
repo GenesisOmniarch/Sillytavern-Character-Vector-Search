@@ -26,10 +26,8 @@
 - **Retrieve chunks / Score threshold は標準 Vector Storage 拡張と同じ値**を使用
   (Vector Storage 設定の Data Bank「Retrieve chunks」と「Score threshold」を毎回読み込みます)
 - Embedding ソース・モデル、チャンク分割設定も Vector Storage 拡張の設定をそのまま使用
-- Data Bank ファイルのベクトル(`file_<hash>`)は標準拡張がベクトル化・保存したものをそのまま使います。
-  **既定ではこの拡張はファイルのベクトル化を一切行いません**(標準拡張がまだベクトル化していないファイルはスキップ)。
-  設定「未ベクトル化の Data Bank ファイルをこの拡張でベクトル化する」をオンにすると、
-  他のグループメンバーの Character 添付など未ベクトル化のファイルも同じ設定で一度だけベクトル化します
+- **この拡張は Data Bank ファイルのベクトル化を一切行いません。** 標準 Vector Storage 拡張がベクトル化して保存したもの(`file_<hash>`)だけを検索します。
+  まだベクトル化されていないファイルは検索対象から外れます(Vector Storage でベクトル化すると自動的に対象になります)
 - 毎回の検索で Embedding API が呼ばれるのはクエリ(キャラカード)側だけで、これは標準拡張がチャット文をクエリにする場合と同じです。
   カードが変わらない限り結果をキャッシュするので、通常は2ターン目以降は呼ばれません。キャラごとの検索は並列で実行します
 - キャラごとに検索範囲を分離: `Global + Chat + そのキャラ自身の Character 添付`
@@ -48,7 +46,8 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 
 1. 標準の **Vector Storage** 拡張で Embedding ソース(Vectorization Source)を設定します。
    Data Bank の「Retrieve chunks」「Score threshold」もここで設定した値が使われます。
-   (標準拡張の「Enabled for files」がオフでも、この拡張は単独で動作します)
+   検索したい Data Bank ファイルは、Vector Storage でベクトル化しておいてください(この拡張はベクトル化しません)。
+   グループの場合、他メンバーの Character 添付は、そのキャラを選んだ状態で Vector Storage の「Vectorize All」を実行するとベクトル化されます
 2. Data Bank(📎 → Open Data Bank)にファイルを追加します。
 3. Extensions パネルの **Character Vector Search** を開き、「有効化」をオンにします。
 4. 「テスト検索」ボタンで、現在のチャットで何が挿入されるかを確認できます。
