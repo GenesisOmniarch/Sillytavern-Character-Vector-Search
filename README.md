@@ -6,11 +6,12 @@
 ## 特徴
 
 - **1対1チャット**: 応答キャラクターのカード全体で検索
-- **グループチャット**: 毎回の生成で、**メンバー全員分**(人数分)をそれぞれのカードで検索
-  - **挿入は応答キャラ自身の結果だけ**(デフォルト)。Alice の応答には Alice のカードで検索した結果だけ、
-    Bob の応答には Bob の結果だけが入るので、キャラ同士の口調や設定が混ざりません
-  - 全員分の検索結果はキャッシュされ、各メンバーの番で再利用されます
-  - 設定で「全員分をまとめて挿入」や「検索は応答キャラのみ」にも切り替え可能
+- **グループチャット**: 毎回の生成で、**メンバー全員分**(人数分)をそれぞれのカードで検索し、
+  **全員分の参考資料を毎回挿入**します。誰が応答する番でも全キャラの資料がプロンプトにあるため、
+  全員の口調が途切れず、全員が会話に参加し続けられます
+  - 結果は**キャラごとに別々のブロック**(別々の拡張プロンプト)として挿入され、1つのテキストに混ぜません。
+    各ブロックには Injection Template が個別に適用され、`{{char}}` はそのブロックの持ち主の名前になります
+  - キャラ間でチャンクの重複除去は行いません(各キャラが自分の資料を欠けずに持ちます)
   - ミュート中のメンバーを含めるかどうかも設定可能(デフォルト: 含める)
 - **Retrieve chunks / Score threshold は標準 Vector Storage 拡張と同じ値**を使用
   (Vector Storage 設定の Data Bank「Retrieve chunks」と「Score threshold」を毎回読み込みます)
@@ -42,16 +43,12 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 
 | 項目 | 説明 |
 | --- | --- |
-| 挿入する結果(グループ) | 応答キャラ自身の結果のみ(推奨・デフォルト)/ 全員分をまとめて挿入 |
-| 検索対象(グループ) | グループ全員分 / 応答キャラクターのみ |
 | ミュート中のメンバーも含める | グループ全員分モード時 |
 | 検索する Data Bank の範囲 | そのキャラ自身の Character 添付のみ / 対象キャラ全員分 |
 | クエリに使うカードの項目 | Name, Description, Personality, Scenario, First message, Examples, System prompt, Post-history, Character's note などを選択 |
 | クエリ最大文字数 | Embedding モデルの入力上限を超える場合に設定(0 = 無制限) |
-| Injection Template | 標準拡張の Data Bank「Injection Template」と同じ。`{{text}}` の位置に応答キャラの検索結果が入ります(まとめて挿入時は全員分)。`{{name}}` = 応答キャラ名。`{{char}}` などのマクロも使用可 |
-| Per-character Template | キャラごとの結果の書式。`{{name}}` = キャラ名、`{{text}}` = そのキャラの結果 |
+| Injection Template | 標準拡張の Data Bank「Injection Template」と同じ形式で、**キャラごとに**適用。`{{text}}` = そのキャラのカードで検索した結果、`{{char}}` / `{{name}}` = そのキャラ名。既定値: `Reference material for {{char}}:` + 改行 + `{{text}}` |
 | Injection Position | 標準拡張と同じ(Before / After Main Prompt、In-chat @ Depth as System/User/Assistant) |
-| 重複チャンクを1回だけ挿入 | 複数キャラで同じチャンクがヒットした場合 |
 | キャッシュ | 検索結果をメモリにキャッシュ |
 
 ## 注意

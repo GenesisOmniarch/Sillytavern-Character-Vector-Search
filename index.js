@@ -22,7 +22,6 @@ import {
     saveSettingsDebounced,
     setExtensionPrompt,
     substituteParams,
-    substituteParamsExtended,
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { getFileAttachment } from '../../../chats.js';
@@ -32,7 +31,8 @@ import { oai_settings } from '../../../openai.js';
 
 const MODULE_NAME = 'character_vector_search';
 const LOG_PREFIX = 'CharacterVectorSearch:';
-export const EXTENSION_PROMPT_TAG = '5_character_vector_search';
+/** キャラごとに別々の拡張プロンプトとして挿入する。キーは昇順ソートされるので連番でメンバー順を保つ */
+export const EXTENSION_PROMPT_TAG_PREFIX = '5_character_vector_search_';
 
 /** カードから抽出できるフィールド */
 const CARD_FIELDS = {
@@ -52,11 +52,6 @@ const CARD_FIELDS = {
 
 const defaultSettings = {
     enabled: true,
-    // 'all' = グループ全員分を検索, 'drafted' = 応答キャラのみ
-    group_mode: 'all',
-    // 'responding' = 応答キャラ自身の検索結果だけをそのキャラの生成に挿入(口調が混ざらない)
-    // 'combined'   = 全員分の検索結果をまとめて挿入
-    inject_mode: 'responding',
     include_muted: true,
     // 'own' = 共通(Global + Chat) + そのキャラ自身の Character attachments
     // 'all_members' = 共通 + 対象キャラ全員の Character attachments を各キャラで検索
@@ -77,9 +72,8 @@ const defaultSettings = {
     },
     // クエリ文字数上限 (0 = 無制限)。Embedding モデルの入力上限対策
     max_query_chars: 0,
-    dedupe: true,
-    template: 'Character-related information:\n{{text}}',
-    char_template: '[{{name}}]\n{{text}}',
+    // キャラごとに適用。{{text}} = そのキャラのカードで検索した結果, {{char}} / {{name}} = そのキャラ名
+    template: 'Reference material for {{char}}:\n{{text}}',
     position: extension_prompt_types.IN_PROMPT,
     depth: 4,
     role: extension_prompt_roles.SYSTEM,
@@ -519,14 +513,6 @@ function getTargetCharacters() {
         const group = (context.groups ?? []).find(g => g.id === context.groupId);
         if (!group) return result;
 
-        const draftedChid = context.characterId !== undefined && context.characterId !== null ? Number(context.characterId) : -1;
-        if (settings.group_mode === 'drafted') {
-            if (draftedChid >= 0 && characters[draftedChid]) {
-                result.push({ character: characters[draftedChid], chid: draftedChid });
-            }
-            return result;
-        }
-
         for (const avatar of group.members ?? []) {
             if (!settings.include_muted && (group.disabled_members ?? []).includes(avatar)) {
                 continue;
@@ -621,69 +607,48 @@ async function searchForCharacters() {
 }
 
 /**
- * 今回の生成で応答するキャラクターの avatar を取得
- * (グループ生成中は ST が characterId を応答キャラに切り替えている)
- * @returns {string|null}
+ * 1キャラ分の検索結果に Injection Template を適用する。
+ * {{char}} はそのキャラの名前で展開される(応答キャラの名前にはならない)。
+ * @param {{ name: string, chunks: string[] }} result
+ * @returns {string}
  */
-function getRespondingAvatar() {
-    const context = getContext();
-    const chid = context.characterId;
-    if (chid === undefined || chid === null || chid === '') {
-        return null;
-    }
-    return context.characters?.[Number(chid)]?.avatar ?? null;
-}
-
-/**
- * 挿入する結果を選ぶ。
- * - 1対1チャット: そのキャラの結果
- * - グループ + responding: 応答キャラ自身の結果のみ(他メンバーの結果は混ぜない)
- * - グループ + combined: 全員分
- * @param {{ name: string, avatar: string, chunks: string[] }[]} results
- */
-function selectResultsForInjection(results) {
-    const context = getContext();
-    if (!context.groupId || settings.inject_mode === 'combined') {
-        return results;
-    }
-    const avatar = getRespondingAvatar();
-    if (!avatar) {
-        console.debug(`${LOG_PREFIX} Responding character is unknown, skipping injection`);
-        return [];
-    }
-    return results.filter(r => r.avatar === avatar);
-}
-
-/**
- * @param {{ name: string, chunks: string[] }[]} results
- */
-function formatResults(results) {
-    const seen = new Set();
-    const blocks = [];
-
-    for (const { name, chunks } of results) {
-        const filtered = settings.dedupe ? chunks.filter(c => !seen.has(c)) : chunks;
-        filtered.forEach(c => seen.add(c));
-        if (!filtered.length) {
-            continue;
-        }
-        const text = filtered.join('\n');
-        const charTemplate = String(settings.char_template || '').trim() ? settings.char_template : '{{text}}';
-        blocks.push(substituteParamsExtended(charTemplate, { text, name }));
-    }
-
-    if (!blocks.length) {
+function formatCharacterResult({ name, chunks }) {
+    if (!chunks.length) {
         return '';
     }
-
-    // Injection Template が空の場合は既定値を使う
     const template = String(settings.template || '').trim() ? settings.template : defaultSettings.template;
-    const name = results.length === 1 ? results[0].name : '';
-    return substituteParamsExtended(template, { text: blocks.join('\n\n'), name });
+    // 第2引数 null → (content, name1, name2, original, group, replaceCharacterCard, additionalMacro) の旧シグネチャ
+    return substituteParams(template, null, name, undefined, undefined, true, { text: chunks.join('\n'), name });
 }
 
-function clearPrompt() {
-    setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.role);
+/** 前回挿入したキー(メンバー数が減った場合に消すため) */
+const injectedKeys = new Set();
+
+function clearPrompts() {
+    for (const key of injectedKeys) {
+        setExtensionPrompt(key, '', settings.position, settings.depth, settings.include_wi, settings.role);
+    }
+    injectedKeys.clear();
+}
+
+/**
+ * 全員分の結果を、キャラごとに別々の拡張プロンプトとして挿入する
+ * @param {{ name: string, chunks: string[] }[]} results
+ * @returns {string[]} 挿入したテキスト
+ */
+function injectResults(results) {
+    const inserted = [];
+    results.forEach((result, index) => {
+        const text = formatCharacterResult(result);
+        if (!text) {
+            return;
+        }
+        const key = `${EXTENSION_PROMPT_TAG_PREFIX}${String(index).padStart(3, '0')}`;
+        setExtensionPrompt(key, text, Number(settings.position), Number(settings.depth), settings.include_wi, Number(settings.role));
+        injectedKeys.add(key);
+        inserted.push(text);
+    });
+    return inserted;
 }
 
 /**
@@ -695,22 +660,21 @@ function clearPrompt() {
  */
 async function interceptor(_chat, _contextSize, _abort, type) {
     try {
-        clearPrompt();
+        clearPrompts();
 
         if (!settings.enabled || type === 'quiet') {
             return;
         }
 
-        // グループでは全員分を検索(結果はキャッシュされ、各メンバーの番で再利用される)
+        // 毎回、全員分のカードで検索し、全員分の参考資料をキャラごとに分けて挿入する
         const results = await searchForCharacters();
-        const insertedText = formatResults(selectResultsForInjection(results));
-        if (!insertedText) {
+        const inserted = injectResults(results);
+        if (!inserted.length) {
             console.debug(`${LOG_PREFIX} No relevant Data Bank chunks found`);
             return;
         }
 
-        console.log(`${LOG_PREFIX} Injecting character-related Data Bank chunks\n`, insertedText);
-        setExtensionPrompt(EXTENSION_PROMPT_TAG, insertedText, Number(settings.position), Number(settings.depth), settings.include_wi, Number(settings.role));
+        console.log(`${LOG_PREFIX} Injected reference material for ${inserted.length} character(s)\n`, inserted.join('\n\n'));
     } catch (error) {
         console.error(`${LOG_PREFIX} Failed`, error);
         toastr.error(String(error?.message ?? error), 'Character Vector Search', { preventDuplicates: true });
@@ -735,6 +699,14 @@ function loadSettings() {
         if (s.fields[key] === undefined) {
             s.fields[key] = value;
         }
+    }
+    // 旧バージョンの設定を整理(応答キャラのみ挿入/まとめて挿入は廃止)
+    delete s.inject_mode;
+    delete s.group_mode;
+    delete s.dedupe;
+    delete s.char_template;
+    if (s.template === 'Character-related information:\n{{text}}') {
+        s.template = defaultSettings.template;
     }
     settings = s;
 }
@@ -762,15 +734,11 @@ function bindSettings() {
 
     bindCheckbox('#cvs_enabled', 'enabled');
     bindCheckbox('#cvs_include_muted', 'include_muted');
-    bindCheckbox('#cvs_dedupe', 'dedupe');
     bindCheckbox('#cvs_include_wi', 'include_wi');
     bindCheckbox('#cvs_cache_results', 'cache_results');
-    bindText('#cvs_group_mode', 'group_mode');
-    bindText('#cvs_inject_mode', 'inject_mode');
     bindText('#cvs_scope', 'scope');
     bindText('#cvs_max_query_chars', 'max_query_chars', true);
     bindText('#cvs_template', 'template');
-    bindText('#cvs_char_template', 'char_template');
     bindText('#cvs_depth', 'depth', true);
     bindText('#cvs_role', 'role', true);
 
@@ -807,10 +775,8 @@ function bindSettings() {
                 $('#cvs_test_output').text('No target characters / no Data Bank files');
                 return;
             }
-            // 各キャラの生成時に実際に挿入される内容を表示
-            const sections = (getContext().groupId && settings.inject_mode === 'combined')
-                ? [`=== All members (${results.map(r => `${r.name}: ${r.chunks.length}`).join(', ')}) ===\n${formatResults(results) || '(nothing)'}`]
-                : results.map(r => `=== ${r.name} の応答時 (${r.chunks.length} chunks) ===\n${formatResults([r]) || '(nothing)'}`);
+            // 毎回の生成で挿入される内容(キャラごとに別ブロック)を表示
+            const sections = results.map(r => `=== ${r.name} (${r.chunks.length} chunks) ===\n${formatCharacterResult(r) || '(nothing)'}`);
             const output = sections.join('\n\n');
             console.log(`${LOG_PREFIX} Test search\n${output}`);
             $('#cvs_test_output').text(output);
@@ -847,7 +813,7 @@ jQuery(async () => {
         queryCache.clear();
     });
     eventSource.on(event_types.CHAT_CHANGED, () => {
-        clearPrompt();
+        clearPrompts();
         updateInheritedInfo();
     });
 });
