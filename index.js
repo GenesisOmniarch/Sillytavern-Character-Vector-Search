@@ -605,7 +605,8 @@ async function interceptor(_chat, _contextSize, _abort, type) {
             return;
         }
 
-        // 毎回、全員分のカードで検索し、全員分の参考資料をキャラごとのブロックに分けて {{text}} に入れる
+        // 毎回、全員分の参考資料をキャラごとのブロックに分けて {{text}} に入れる。
+        // 検索するのは保存済みの結果がないキャラだけ(保存済みのキャラは保存済みの結果を使う)
         const results = await searchForCharacters();
         const insertedText = formatResults(results);
         if (!insertedText) {
