@@ -69,7 +69,8 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 | 検索する Data Bank の範囲 | そのキャラ自身の Character 添付のみ / 対象キャラ全員分 |
 | クエリに使うカードの項目 | Name, Description, Personality, Scenario, First message, Examples, System prompt, Post-history, Character's note などを選択 |
 | クエリ最大文字数 | Embedding モデルの入力上限を超える場合に設定(0 = 無制限) |
-| Injection Template | 標準拡張の Data Bank「Injection Template」と同じく自由に記述でき、1回だけ適用されます。`{{text}}` = 全員分の検索結果(キャラごとのブロックに区切り済み)。`{{text}}` を書かなかった場合は末尾に付き、空の場合はブロックのみ挿入。`{{char}}` などのマクロは通常どおり展開されます。資料本文中の `{{char}}` は各ブロックの持ち主の名前で展開されます |
+| Injection Template(標準 Vector Storage の Data Bank を上書き) | この拡張が有効な間だけ、標準 Vector Storage 拡張の Data Bank「Injection Template」をこの内容で置き換えます。無効にすると標準側の Injection Template に戻ります。標準側の設定は書き換えず、標準拡張が挿入したテキストに当て直すだけです。空にすると上書きしません。標準側の Injection Template に `{{text}}` が1回だけ含まれている必要があります |
+| Injection Template(Character Vector Search) | 標準拡張の Data Bank「Injection Template」と同じく自由に記述でき、1回だけ適用されます。`{{text}}` = 全員分の検索結果(キャラごとのブロックに区切り済み)。`{{text}}` を書かなかった場合は末尾に付き、空の場合はブロックのみ挿入。`{{char}}` などのマクロは通常どおり展開されます。資料本文中の `{{char}}` は各ブロックの持ち主の名前で展開されます |
 | Injection Position | 標準拡張と同じ(Before / After Main Prompt、In-chat @ Depth as System/User/Assistant) |
 | 検索結果をこのチャットに保存する | オン推奨。オフにすると毎回の生成で全員分を検索します(毎回料金がかかります) |
 | キャッシュクリア | このチャットに保存された検索結果だけを削除します(確認あり)。次の生成で全員分を再検索するため料金がかかります。ベクトルデータには一切触れません |

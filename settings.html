@@ -51,10 +51,16 @@
             <h4>Injection</h4>
             <div class="flex-container flexFlowColumn">
                 <label for="cvs_template">
-                    <span data-i18n="Injection Template">Injection Template</span>
+                    <span>Injection Template(Character Vector Search)</span>
                 </label>
-                <small>標準と同様に自由に記述できます。&lcub;&lcub;text&rcub;&rcub; = 全員分の検索結果(キャラごとのブロックに区切り済み)。&lcub;&lcub;text&rcub;&rcub; を書かなかった場合は末尾に付きます。</small>
+                <small>この拡張が挿入する、キャラごとの検索結果用。標準と同様に自由に記述できます。&lcub;&lcub;text&rcub;&rcub; = 全員分の検索結果(キャラごとのブロックに区切り済み)。&lcub;&lcub;text&rcub;&rcub; を書かなかった場合は末尾に付きます。</small>
                 <textarea id="cvs_template" class="margin0 text_pole textarea_compact" rows="3" placeholder="Use &lcub;&lcub;text&rcub;&rcub; macro to specify the position of retrieved text."></textarea>
+
+                <label for="cvs_db_template_override">
+                    <span>Injection Template(標準 Vector Storage の Data Bank を上書き)</span>
+                </label>
+                <small>この拡張が有効な間だけ、標準 Vector Storage 拡張の Data Bank「Injection Template」をこの内容で置き換えます。無効にすると標準側の Injection Template がそのまま使われます。標準側の設定は書き換えません。空にすると上書きしません。&lcub;&lcub;text&rcub;&rcub; = 標準拡張の検索結果。</small>
+                <textarea id="cvs_db_template_override" class="margin0 text_pole textarea_compact" rows="3" placeholder="Use &lcub;&lcub;text&rcub;&rcub; macro to specify the position of retrieved text."></textarea>
 
                 <label for="cvs_position" data-i18n="Injection Position">Injection Position</label>
                 <div id="cvs_position" class="radio_group">

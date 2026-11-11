@@ -23,6 +23,8 @@ import {
     saveSettingsDebounced,
     setExtensionPrompt,
     substituteParams,
+    substituteParamsExtended,
+    extension_prompts,
 } from '../../../../script.js';
 import { extension_settings, getContext } from '../../../extensions.js';
 import { is_group_generating } from '../../../group-chats.js';
@@ -33,6 +35,8 @@ import { oai_settings } from '../../../openai.js';
 const MODULE_NAME = 'character_vector_search';
 const LOG_PREFIX = 'CharacterVectorSearch:';
 export const EXTENSION_PROMPT_TAG = '5_character_vector_search';
+/** 標準 Vector Storage 拡張が Data Bank の検索結果を挿入するときのキー(標準拡張の EXTENSION_PROMPT_TAG_DB と同じ値) */
+const VECTORS_DB_PROMPT_TAG = '4_vectors_data_bank';
 
 /** カードから抽出できるフィールド */
 const CARD_FIELDS = {
@@ -74,6 +78,9 @@ const defaultSettings = {
     max_query_chars: 0,
     // 標準拡張と同様に1回だけ適用。{{text}} = 全員分の検索結果(キャラごとのブロックに分けたもの)
     template: 'Related information:\n{{text}}',
+    // 標準 Vector Storage の Data Bank 用 Injection Template を、この拡張が有効な間だけ上書きする。
+    // 空にすると上書きせず、標準側の Injection Template がそのまま使われる。
+    db_template_override: 'Related information:\n{{text}}',
     position: extension_prompt_types.IN_PROMPT,
     depth: 4,
     role: extension_prompt_roles.SYSTEM,
@@ -567,27 +574,82 @@ function formatResults(results) {
     if (!blocks.length) {
         return '';
     }
-    const text = blocks.join('\n\n');
-    const template = String(settings.template ?? '');
-    const textMacro = /\{\{\s*text\s*\}\}/gi;
+    return applyTemplate(String(settings.template ?? ''), blocks.join('\n\n'));
+}
 
-    if (!template.trim()) {
+function clearPrompt() {
+    setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.role);
+}
+
+/**
+ * テンプレートを適用する(formatResults と同じ規則)。
+ * テンプレート側のマクロは展開し、{{text}} には本文を文字列のまま差し込む。{{text}} が無ければ末尾に付ける。
+ * @param {string} template
+ * @param {string} text
+ * @returns {string}
+ */
+function applyTemplate(template, text) {
+    const textMacro = /\{\{\s*text\s*\}\}/gi;
+    if (!String(template ?? '').trim()) {
         return text;
     }
-
     const marker = `CVSTEXTMARKER${Date.now()}${Math.random().toString(36).slice(2)}`;
     const hasTextMacro = textMacro.test(template);
     textMacro.lastIndex = 0;
     const rendered = substituteParams(template.replace(textMacro, marker));
-
     if (!hasTextMacro || !rendered.includes(marker)) {
         return `${rendered.replaceAll(marker, '').trimEnd()}\n${text}`;
     }
     return rendered.split(marker).join(text);
 }
 
-function clearPrompt() {
-    setExtensionPrompt(EXTENSION_PROMPT_TAG, '', settings.position, settings.depth, settings.include_wi, settings.role);
+/**
+ * 標準 Vector Storage 拡張が挿入した Data Bank の検索結果に、この拡張の上書き用 Injection Template を当て直す。
+ *
+ * 標準拡張は自分の Injection Template を内部の設定オブジェクトから読むため、設定値を書き換えても反映されない
+ * (また、保存されている設定を書き換えたくない)。そこで、標準拡張の生成インターセプター(loading_order 100)が
+ * 挿入し終えたあと(この拡張は 101)、挿入済みテキストから標準テンプレートの前後部分を取り除いて検索結果の本文を
+ * 取り出し、上書き用テンプレートで包み直して同じキーに入れ直す。挿入位置・深さ・ロールは標準側の設定をそのまま使う。
+ * 検索やベクトルへのアクセスは一切行わない。
+ *
+ * 取り出しに失敗した場合(標準テンプレートに {{text}} が無い、毎回値が変わるマクロが含まれている、など)は
+ * 何もせず、標準側の挿入内容をそのまま残す。
+ */
+function overrideVectorsDataBankPrompt() {
+    const override = String(settings.db_template_override ?? '');
+    if (!override.trim()) {
+        return;
+    }
+
+    const entry = extension_prompts?.[VECTORS_DB_PROMPT_TAG];
+    if (!entry || !String(entry.value ?? '').trim()) {
+        return;
+    }
+
+    const standardTemplate = String(vs().file_template_db ?? '');
+    const marker = `CVSDBMARKER${Date.now()}${Math.random().toString(36).slice(2)}`;
+    const rendered = substituteParamsExtended(standardTemplate, { text: marker });
+    const markerIndex = rendered.indexOf(marker);
+    if (markerIndex < 0 || rendered.indexOf(marker, markerIndex + 1) >= 0) {
+        console.warn(`${LOG_PREFIX} Could not override the Data Bank Injection Template: the standard template must contain {{text}} exactly once`);
+        return;
+    }
+
+    const prefix = rendered.slice(0, markerIndex);
+    const suffix = rendered.slice(markerIndex + marker.length);
+    const value = String(entry.value);
+    if (!value.startsWith(prefix) || !value.endsWith(suffix) || value.length < prefix.length + suffix.length) {
+        console.warn(`${LOG_PREFIX} Could not override the Data Bank Injection Template: inserted text does not match the standard template`);
+        return;
+    }
+
+    const text = value.slice(prefix.length, value.length - suffix.length);
+    if (!text.trim()) {
+        return;
+    }
+    const replaced = applyTemplate(override, text);
+    setExtensionPrompt(VECTORS_DB_PROMPT_TAG, replaced, entry.position, entry.depth, entry.scan, entry.role, entry.filter);
+    console.debug(`${LOG_PREFIX} Overrode the Data Bank Injection Template of Vector Storage`);
 }
 
 /**
@@ -604,6 +666,9 @@ async function interceptor(_chat, _contextSize, _abort, type) {
         if (!settings.enabled || type === 'quiet') {
             return;
         }
+
+        // この拡張が有効な間は、標準 Vector Storage の Data Bank 挿入にも上書き用テンプレートを当てる
+        overrideVectorsDataBankPrompt();
 
         // 毎回、全員分の参考資料をキャラごとのブロックに分けて {{text}} に入れる。
         // 検索するのは保存済みの結果がないキャラだけ(保存済みのキャラは保存済みの結果を使う)
@@ -681,6 +746,7 @@ function bindSettings() {
     bindText('#cvs_scope', 'scope');
     bindText('#cvs_max_query_chars', 'max_query_chars', true);
     bindText('#cvs_template', 'template');
+    bindText('#cvs_db_template_override', 'db_template_override');
     bindText('#cvs_depth', 'depth', true);
     bindText('#cvs_role', 'role', true);
 
