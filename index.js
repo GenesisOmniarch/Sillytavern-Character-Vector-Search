@@ -884,9 +884,39 @@ async function addSettingsUi() {
     bindSettings();
 }
 
+/**
+ * {{cvsActive}} マクロを登録する。この拡張が有効なら "true"、無効なら空文字を返す。
+ * プロンプト側で {{if cvsActive}}…{{else}}…{{/if}} と書くと、拡張のオン/オフで文面を切り替えられる。
+ * 新旧どちらのマクロ機構にも登録を試み、どちらも無ければ何もしない(拡張の動作には影響しない)。
+ */
+async function registerMacros() {
+    const handler = () => (settings?.enabled ? 'true' : '');
+    const description = 'Character Vector Search が有効なら true、無効なら空。{{if cvsActive}}…{{else}}…{{/if}} で使う。';
+    try {
+        const { macros } = await import('../../../macros/macro-system.js');
+        macros.register('cvsActive', {
+            handler,
+            category: macros.category?.MISC,
+            description,
+            returns: '"true" or empty string',
+            exampleUsage: ['{{if cvsActive}}on{{else}}off{{/if}}'],
+        });
+        return;
+    } catch (error) {
+        console.debug(`${LOG_PREFIX} New macro engine unavailable, trying MacrosParser`, error);
+    }
+    try {
+        const { MacrosParser } = await import('../../../macros.js');
+        MacrosParser.registerMacro('cvsActive', handler, description);
+    } catch (error) {
+        console.warn(`${LOG_PREFIX} Could not register the cvsActive macro`, error);
+    }
+}
+
 jQuery(async () => {
     loadSettings();
     await addSettingsUi();
+    await registerMacros();
 
     eventSource.on(event_types.CHAT_CHANGED, () => {
         clearPrompt();

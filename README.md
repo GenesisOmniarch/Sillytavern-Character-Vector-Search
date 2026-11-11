@@ -61,6 +61,12 @@ https://github.com/GenesisOmniarch/Sillytavern-Character-Vector-Search
 3. Extensions パネルの **Character Vector Search** を開き、「有効化」をオンにします。
 4. 「テスト検索」ボタンで、現在のチャットで何が挿入されるかを確認できます。
 
+## マクロ `{{cvsActive}}`
+
+この拡張が有効なら `true`、無効なら空を返すマクロを登録します。メインプロンプトや Post-History Instructions で
+`{{if cvsActive}}拡張オン時の文{{else}}拡張オフ時の文{{/if}}` と書くと、拡張のオン/オフで文面を切り替えられます
+(SillyTavern の新しいマクロエンジンが必要です。`{{if …}}` が使える環境なら利用できます)。
+
 ## 設定項目
 
 | 項目 | 説明 |
